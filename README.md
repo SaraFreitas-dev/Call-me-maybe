@@ -17,46 +17,11 @@
 
 
 ```text
-call-me-maybe/
-│
-├── data/
-│   ├── input/
-│   │   ├── function_calling_tests.json
-│   │   └── functions_definition.json
-│   │
-│   └── output/
-│       └── function_calling_results.json
-│
-├── src/
-│   ├── main.py
-│   │
-│   ├── models/
-│   │   ├── function_definition.py
-│   │   ├── function_call.py
-│   │   └── prompt.py
-│   │
-│   ├── parser/
-│   │   ├── json_loader.py
-│   │   └── json_writer.py
-│   │
-│   ├── llm/
-│   │   ├── llm_client.py
-│   │   └── tokenizer.py
-│   │
-│   ├── decoder/
-│   │   ├── constrained_decoder.py
-│   │   ├── json_state_machine.py
-│   │   └── token_validator.py
-│   │
-│   ├── services/
-│   │   └── function_selector.py
-│   │
-│   └── utils/
-│       └── exceptions.py
-│
-├── tests/
-│
-├── README.md
-├── Makefile
-└── pyproject.toml
+src/
+├── __main__.py
+├── schemas.py
+├── data_loader.py
+├── llm_engine.py
+├── constrained_decoder.py
+└── vocab_loader.py
 ```

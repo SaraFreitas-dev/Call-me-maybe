@@ -1,3 +1,7 @@
+# 📦 UV & Python Makefile Example
+
+
+```text
 UV = uv
 
 FUNCTIONS = data/input/functions_definition.json
@@ -5,8 +9,6 @@ INPUT = data/input/function_calling_tests.json
 OUTPUT = function_calling_results.json
 
 all: install run
-
-# INSTALL ALL REQUIREMENTS
 
 install:
 	@if command -v uv >/dev/null 2>&1; then \
@@ -20,7 +22,6 @@ install:
 	@uv sync
 	@echo "✅ Dependencies ready"
 
-# RUN THE PROGRAM
 run:
 	@$(UV) run python -m src \
 		--functions_definition $(FUNCTIONS) \
@@ -33,38 +34,14 @@ debug:
 		--input $(INPUT) \
 		--output $(OUTPUT)
 
-
-# CHECK FOR NORM ERRORS
-lint:
-	@echo "\n🔍 Running flake8 and mypy..."
-	$(VENV)/bin/flake8 .
-	$(VENV)/bin/mypy . \
-		--warn-return-any \
-		--warn-unused-ignores \
-		--ignore-missing-imports \
-		--disallow-untyped-defs \
-		--check-untyped-defs
-	@echo "✅ Lint completed"
-
-lint-strict:
-	@echo "🧠 Running strict checks..."
-	$(VENV)/bin/flake8 .
-	$(VENV)/bin/mypy . \
-		--strict
-	@echo "✅ Strict lint completed"
-
-# CLEANERS
 clean:
-	@echo "\n🧹 Cleaning cache files..."
 	@find . -name "__pycache__" -exec rm -rf {} +
 	@find . -name "*.pyc" -delete
-	@echo "\n✅ Partial clean complete\n"
 
 fclean: clean
-	@echo "\n💣 Removing virtual environment..."
 	@rm -rf .venv
-	@echo "\n✅ Full clean complete\n"
 
 re: fclean install
 
 .PHONY: all install run debug clean fclean re
+```

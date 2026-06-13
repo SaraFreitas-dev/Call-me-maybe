@@ -3,18 +3,12 @@
 ### Function Calling
 - https://platform.openai.com/docs/guides/function-calling
 
-### LLM Fundamentals
-- https://huggingface.co/learn/llm-course
-
 ### JSON Schema
 - https://json-schema.org/understanding-json-schema/
 
-### Tokenization
-- https://huggingface.co/docs/tokenizers/index
+- https://docs.astral.sh/uv/guides/projects/
 
-### Constrained Decoding & Structured Outputs
-- https://platform.openai.com/docs/guides/structured-outputs
-
+- https://docs.astral.sh/uv/getting-started/installation/
 
 ```text
 src/

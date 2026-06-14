@@ -13,9 +13,18 @@ Keep data handling consistent across the project.
 from pydantic import BaseModel, field_validator
 
 
+class PromptEntry(BaseModel):
+    """
+    To validate function_calling_tests.json
+    or any file used as input prompt
+    """
+    prompt: str
+
+
 class ParameterSchema(BaseModel):
     """
-    Represents the type for each parameter on the JSON file:
+    Represents the type for each parameter on the 
+    functions_definition.json - JSON file:
     "string", "number", "integer", and "boolean"
     """
     type: str
@@ -32,6 +41,7 @@ class ParameterSchema(BaseModel):
 class FunctionDefinition(BaseModel):
     """
     Represents each field on JSON:
+    functions_definition.json
     name,description,parameters,returns
     """
     name: str
@@ -44,6 +54,7 @@ class FunctionCall(BaseModel):
     """
     Represents the final output,
     To be written on the JSON file
+    function_calling_results.json
     """
     prompt: str
     name: str

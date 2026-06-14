@@ -25,6 +25,7 @@ class ParameterSchema(BaseModel):
     @field_validator('type')
     @classmethod
     def validate_parameter_schema(cls, value: str) -> str:
+        """Validate the parameter input, check for errors"""
         types: list[str] = ["string", "number", "integer", "boolean"]
         if value not in types:
             raise ValueError("Invalid type on ParameterSchema.")

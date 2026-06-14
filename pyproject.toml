@@ -2,11 +2,15 @@
 name = "call-me-maybe"
 version = "1.0.0"
 description = "AI-powered function calling engine using a LLM to convert natural language prompts into validated JSON function calls"
-authors = "sarfreit"
+authors = [{name = "sarfreit"}]
 requires-python = ">=3.10"
+dependencies = ["pydantic>=2.0", "numpy", "torch", "llm-sdk"]
+
+[dependency-groups]
+dev = ["flake8", "mypy"]
 
 [tool.flake8]
-exclude = ["__pycache__", ".venv","llm_sdk"]
+exclude = ["__pycache__", ".venv", "llm_sdk"]
 
 [tool.mypy]
 exclude = ["__pycache__", ".venv", "llm_sdk"]

@@ -19,3 +19,5 @@ src/
 ├── constrained_decoder.py
 └── vocab_loader.py
 ```
+
+source $HOME/.local/bin/env

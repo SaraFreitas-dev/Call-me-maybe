@@ -9,4 +9,11 @@ Build token lookup structures.
 Provide vocabulary utilities for constrained decoding.
 Translate between tokens and token IDs when required.
 
+Input Text
+    ↓
+Tokenizer
+    ↓
+Token IDs
+    ↓
+Language Model
 """

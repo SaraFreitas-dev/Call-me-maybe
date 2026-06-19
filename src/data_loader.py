@@ -54,13 +54,13 @@ def load_test_prompts(path: str) -> list[PromptEntry]:
     Calls _load_json_file() and validates each entry as a PromptEntry.
     """
     data = _load_json_file(path)
-    pe: list[PromptEntry] = []
+    prompts: list[PromptEntry] = []
 
     try:
         for dict_data in data:
-            pe_data = PromptEntry(**dict_data)
-            pe.append(pe_data)
-        return pe
+            prompts_data = PromptEntry(**dict_data)
+            prompts.append(prompts_data)
+        return prompts
     except ValidationError as e:
         print(f"Error loading PromptEntry JSON: {e}")
         sys.exit(1)

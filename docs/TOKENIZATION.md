@@ -34,7 +34,11 @@ In this project, tokenization is exposed through two methods:
 
 ```python
 model.encode("What is the sum of 2 and 3?")
-# → tensor([1837, 374, 279, 2629, 315, 220, 17, 323, 220, 18, 30])
+# → tensor([[1837, 374, 279, 2629, 315, 220, 17, 323, 220, 18, 30]])
+# note: returns a 2D tensor — use [0].tolist() to get a flat list of ints
+
+ids = model.encode("What is the sum of 2 and 3?")[0].tolist()
+# → [1837, 374, 279, 2629, 315, 220, 17, 323, 220, 18, 30]
 
 model.decode([1837, 374, 279, 2629])
 # → "What is the sum"
@@ -45,7 +49,7 @@ And for constrained decoding, you also use:
 ```python
 model.get_path_to_vocab_file()
 # → "/path/to/vocab.json"
-# This gives you the full map: token_id → token_string
+# This gives you the full map: token_string → token_id
 ```
 
 ---
@@ -109,7 +113,7 @@ This continues for thousands of iterations until the vocabulary reaches its targ
 
 ### Why this matters for the project
 
-The vocabulary you get from `get_path_to_vocab_file()` is the **end result** of this BPE process applied to a massive multilingual corpus. It contains ~150,000 entries — everything from single characters to full words to common multi-word sequences.
+The vocabulary you get from `get_path_to_vocab_file()` is the **end result** of this BPE process applied to a massive multilingual corpus. It contains ~151,643 entries — everything from single characters to full words to common multi-word sequences.
 
 When you're doing constrained decoding, you can't assume `fn_add_numbers` is a single token. The BPE algorithm may have split it as:
 
@@ -127,74 +131,59 @@ Your prefix-matching logic must handle all cases. See [Implications for Constrai
 
 ### Size
 
-Qwen3-0.6B has a vocabulary of approximately **151,936 tokens**. This means:
+Qwen3-0.6B has a vocabulary of **151,643 tokens**. This means:
 
-- At each generation step, the model outputs ~151,936 logit values
+- At each generation step, the model outputs 151,643 logit values
 - Your `get_logits_from_input_ids()` call returns a list of this length
-- Your valid token set is a subset of `{0, 1, 2, ..., 151935}`
+- Your valid token set is a subset of `{0, 1, 2, ..., 151642}`
 
 ### Structure of the vocab file
 
-The file returned by `get_path_to_vocab_file()` is a JSON file. It maps token IDs (as strings or integers, check the actual file) to their string representations:
+The file returned by `get_path_to_vocab_file()` is a JSON file. The **real format** — confirmed from the actual Qwen3 vocab file — maps **token strings to integer IDs**:
 
 ```json
 {
-  "0": "!",
-  "1": "\"",
-  "2": "#",
-  "3": "$",
+  "!": 0,
+  "\"": 1,
+  "#": 2,
+  "$": 3,
+  "%": 4,
+  "&": 5,
   ...
-  "5476": "{",
-  "9313": "}",
-  "1": "\"",
-  ...
-  "19006": "fn",
+  "{": 5476,
+  "}": 9313,
   ...
 }
 ```
 
-> **⚠️ Check the actual format first.** Load the file and inspect a few entries before writing any code that depends on its structure. The keys might be integers or strings; the values might include special Unicode markers.
+> **⚠️ Important:** The key is the **token string**, the value is the **integer ID** — not the other way around. This is the opposite of what you might expect.
+
+### Building your lookup tables
+
+Because the vocab maps `str → int`, you can look up token IDs directly. But for constrained decoding you also need the reverse — given an ID, what is the token string? Build both once at startup:
 
 ```python
 import json
 
 vocab_path = model.get_path_to_vocab_file()
 with open(vocab_path, "r", encoding="utf-8") as f:
-    vocab_raw = json.load(f)
+    str_to_id: dict[str, int] = json.load(f)
 
-# Inspect the structure
-print(type(list(vocab_raw.keys())[0]))    # str or int?
-print(list(vocab_raw.items())[:10])       # first 10 entries
-print(vocab_raw.get("5476") or vocab_raw.get(5476))  # try both
+# Build the reverse lookup: id → string
+id_to_str: dict[int, str] = {v: k for k, v in str_to_id.items()}
 ```
 
-### Building your lookup tables
-
-Once you know the format, build these two dictionaries **once** at startup:
+Using them:
 
 ```python
-def load_vocab(path: str) -> tuple[dict[int, str], dict[str, int]]:
-    """
-    Load vocabulary file and return:
-    - id_to_str: token_id (int) → token_string (str)
-    - str_to_id: token_string (str) → token_id (int)
-    """
-    with open(path, "r", encoding="utf-8") as f:
-        raw = json.load(f)
+# token string → ID
+brace_id = str_to_id["{"]       # → 5476
 
-    id_to_str: dict[int, str] = {}
-    str_to_id: dict[str, int] = {}
-
-    for key, value in raw.items():
-        token_id = int(key)
-        token_str = value
-        id_to_str[token_id] = token_str
-        str_to_id[token_str] = token_id  # note: collisions possible if two IDs map to same string
-
-    return id_to_str, str_to_id
+# ID → token string (e.g. after model picks next_id)
+token_str = id_to_str[next_id]  # → "{"
 ```
 
-> **Collision warning:** Two different token IDs can theoretically map to the same string (e.g. a byte-level fallback and a merged token for the same text). For `str_to_id`, the last write wins. For constrained decoding purposes, `id_to_str` is your primary lookup — you iterate over all token IDs and check their strings.
+> **Collision note:** If two token strings map to the same ID (rare but possible), the reverse lookup keeps only the last one. For constrained decoding, always iterate over `str_to_id.items()` — the forward direction — to catch all tokens.
 
 ---
 
@@ -222,7 +211,7 @@ Qwen3 uses the `Ġ` convention (same as GPT-2 and most Hugging Face models).
 Say you want to find the token ID for `{`. You might write:
 
 ```python
-open_brace_id = str_to_id["{"]    # ✅ finds the '{' token
+brace_id = str_to_id["{"]    # ✅ finds the '{' token
 ```
 
 But what about the colon after `"name"`? In the generated JSON, it appears as `: ` — colon followed by space. But the *next* token after the colon might be `Ġ"` (space + quote), not `"`:
@@ -254,7 +243,7 @@ Use this when matching tokens against target strings:
 
 ```python
 def tokens_continuing(
-    vocab: dict[int, str],
+    str_to_id: dict[str, int],
     target: str,
     already_written: str
 ) -> set[int]:
@@ -265,7 +254,7 @@ def tokens_continuing(
     remaining = target[len(already_written):]
     valid = set()
 
-    for token_id, raw_str in vocab.items():
+    for raw_str, token_id in str_to_id.items():
         normalized = normalize_token(raw_str)
         if remaining.startswith(normalized) and normalized != "":
             valid.add(token_id)
@@ -276,25 +265,23 @@ def tokens_continuing(
 ### Example: finding `{` tokens
 
 ```python
-# Naive — might miss variants
-brace_ids = {id for id, s in vocab.items() if s == "{"}
+# Direct lookup — the most common case
+brace_id = str_to_id.get("{")
+print(brace_id)   # 5476
 
-# Better — catches ' {' (with leading space) too, if you want whitespace flexibility
-brace_ids = {id for id, s in vocab.items() if normalize_token(s) == "{"}
-
-# Check what you actually have:
-for tid in brace_ids:
-    print(f"ID {tid}: repr={repr(vocab[tid])}")
-# Might print:
-# ID 5476:  repr='{'
-# ID 90134: repr='Ġ{'    ← space + brace, valid after a comma
+# Find ALL variants including with leading space (Ġ{)
+brace_ids = {
+    token_id for raw_str, token_id in str_to_id.items()
+    if normalize_token(raw_str) == "{"
+}
+print(brace_ids)  # {5476, 90134}  ← '{' and 'Ġ{' both map here
 ```
 
 ---
 
 ## Special Tokens
 
-Beyond regular text tokens, the vocabulary contains **special tokens** used to control the model's behaviour. These are typically wrapped in angle brackets or similar markers:
+Beyond regular text tokens, the vocabulary contains **special tokens** used to control the model's behaviour. These are typically wrapped in angle brackets:
 
 ```
 <|endoftext|>    → end of document
@@ -303,45 +290,14 @@ Beyond regular text tokens, the vocabulary contains **special tokens** used to c
 <|pad|>          → padding token
 ```
 
-For Qwen3 (an instruction-tuned model), the chat format uses:
-
-```
-<|im_start|>system
-You are a helpful assistant.
-<|im_end|>
-<|im_start|>user
-Greet john
-<|im_end|>
-<|im_start|>assistant
-```
-
-### Why this matters for your prompt
-
-If you construct your prompt as a plain string and pass it through `model.encode()`, the tokenizer may or may not add these special tokens depending on how the SDK works. Test this:
-
-```python
-prompt = "Greet john"
-ids = list(model.encode(prompt))
-print(ids)
-# Check if there are special token IDs at the start/end
-# Compare with the special token IDs from the vocab file
-```
-
-If the model expects the chat format and you don't provide it, function selection may be less accurate. If the SDK handles this internally, you don't need to worry about it.
-
 ### Excluding special tokens from constrained decoding
 
 Special tokens should **never** appear in your generated JSON output. Add them to a blocklist:
 
 ```python
-SPECIAL_TOKEN_STRINGS = {
-    "<|endoftext|>", "<|im_start|>", "<|im_end|>", "<|pad|>",
-    # add others as you discover them in the vocab file
-}
-
 special_token_ids = {
-    id for id, s in vocab.items()
-    if s in SPECIAL_TOKEN_STRINGS or (s.startswith("<|") and s.endswith("|>"))
+    token_id for raw_str, token_id in str_to_id.items()
+    if raw_str.startswith("<|") and raw_str.endswith("|>")
 }
 
 # Always exclude these, regardless of state
@@ -359,7 +315,7 @@ Let's trace what happens when you call `model.encode()`:
 ```python
 prompt = 'You are a function calling assistant.\n\nAvailable functions:\n- fn_greet(name: string)\n\nUser: "Greet john"\n\nOutput: {"name": "'
 
-ids = list(model.encode(prompt))
+ids = model.encode(prompt)[0].tolist()
 ```
 
 The tokenizer processes this left to right, greedily merging characters into the longest known BPE token:
@@ -373,7 +329,6 @@ The tokenizer processes this left to right, greedily merging characters into the
 ...
 "fn"         → ID 19006 (fn — no leading space, starts after newline+dash)
 "_greet"     → ID 34521 (_greet — underscore included)
-"(name"      → ID ...
 ...
 "{"          → ID 5476
 '"'          → ID 1     (opening quote of name value)
@@ -384,17 +339,14 @@ The key insight: **the same text tokenizes differently depending on what comes b
 ### Checking a specific string's tokenization
 
 ```python
-def tokenize_string(model, text: str) -> list[tuple[int, str]]:
+def tokenize_string(model, str_to_id: dict[str, int], text: str) -> list[tuple[int, str]]:
     """Show how a string gets tokenized, with IDs and token strings."""
-    ids = list(model.encode(text))
-    # You'll need the vocab to map back to strings
-    vocab_path = model.get_path_to_vocab_file()
-    with open(vocab_path) as f:
-        vocab = {int(k): v for k, v in json.load(f).items()}
-    return [(id, vocab[id]) for id in ids]
+    id_to_str = {v: k for k, v in str_to_id.items()}
+    ids = model.encode(text)[0].tolist()
+    return [(token_id, id_to_str[token_id]) for token_id in ids]
 
 # Example
-result = tokenize_string(model, "fn_add_numbers")
+result = tokenize_string(model, str_to_id, "fn_add_numbers")
 for token_id, token_str in result:
     print(f"  {token_id:6d}  {repr(token_str)}")
 
@@ -418,7 +370,7 @@ When you want to allow the function name `fn_greet`, you can't just look up a si
 
 ```python
 def get_continuation_tokens(
-    vocab: dict[int, str],
+    str_to_id: dict[str, int],
     target: str,
     written_so_far: str
 ) -> set[int]:
@@ -436,7 +388,7 @@ def get_continuation_tokens(
         return set()   # target already fully written
 
     valid = set()
-    for token_id, raw_str in vocab.items():
+    for raw_str, token_id in str_to_id.items():
         norm = normalize_token(raw_str)
         # Token is valid if it's a prefix of what still needs to be written
         if remaining.startswith(norm) and norm != "":
@@ -451,7 +403,7 @@ def get_continuation_tokens(
 
 ```python
 def get_valid_name_tokens(
-    vocab: dict[int, str],
+    str_to_id: dict[str, int],
     all_fn_names: list[str],
     written_so_far: str
 ) -> set[int]:
@@ -459,19 +411,20 @@ def get_valid_name_tokens(
     valid = set()
     for fn_name in all_fn_names:
         if fn_name.startswith(written_so_far):
-            valid |= get_continuation_tokens(vocab, fn_name, written_so_far)
+            valid |= get_continuation_tokens(str_to_id, fn_name, written_so_far)
     return valid
 ```
 
 ### 3. Pre-compute everything you can
 
-The generation loop runs ~50–200 times per prompt. Searching 150,000 vocabulary entries inside the loop is expensive if done naively. Pre-compute:
+The generation loop runs ~50–200 times per prompt. Searching 151,643 vocabulary entries inside the loop is expensive if done naively. Pre-compute fixed sets at startup:
 
 ```python
 class VocabLookup:
-    def __init__(self, vocab: dict[int, str]):
-        self.vocab = vocab
-        self.norm_vocab = {id: normalize_token(s) for id, s in vocab.items()}
+    def __init__(self, str_to_id: dict[str, int]):
+        self.str_to_id = str_to_id
+        self.id_to_str = {v: k for k, v in str_to_id.items()}
+        self.norm = {token_id: normalize_token(s) for s, token_id in str_to_id.items()}
 
         # Pre-compute structural token sets (used every generation step)
         self.open_brace   = self._find("{")
@@ -483,17 +436,17 @@ class VocabLookup:
         self.special      = self._find_special()
 
     def _find(self, s: str) -> set[int]:
-        return {id for id, norm in self.norm_vocab.items() if norm == s}
+        return {token_id for token_id, norm in self.norm.items() if norm == s}
 
     def _find_strip(self, s: str) -> set[int]:
-        return {id for id, norm in self.norm_vocab.items() if norm.strip() == s}
+        return {token_id for token_id, norm in self.norm.items() if norm.strip() == s}
 
     def _find_numeric(self) -> set[int]:
-        return {id for id, norm in self.norm_vocab.items()
+        return {token_id for token_id, norm in self.norm.items()
                 if norm and all(c in "0123456789.-+eE" for c in norm)}
 
     def _find_special(self) -> set[int]:
-        return {id for id, s in self.vocab.items()
+        return {token_id for s, token_id in self.str_to_id.items()
                 if s.startswith("<|") and s.endswith("|>")}
 ```
 
@@ -510,7 +463,6 @@ def normalize_token(token_str: str) -> str:
             return chr(byte_val)
         except ValueError:
             pass
-    # ... regular normalization ...
     return (token_str
             .replace("Ġ", " ")
             .replace("Ċ", "\n"))
@@ -525,7 +477,7 @@ def normalize_token(token_str: str) -> str:
 Before implementing constrained decoding, always check how your prompt tokenizes. Look for unexpected splits:
 
 ```python
-tokens = tokenize_string(model, your_prompt)
+tokens = tokenize_string(model, str_to_id, your_prompt)
 print("Full tokenization:")
 for i, (tid, tstr) in enumerate(tokens):
     print(f"  [{i:3d}] id={tid:6d}  {repr(tstr)}")
@@ -537,7 +489,7 @@ for i, (tid, tstr) in enumerate(tokens):
 fn_names = [fn.name for fn in function_definitions]
 print("Function name tokenizations:")
 for name in fn_names:
-    tokens = tokenize_string(model, name)
+    tokens = tokenize_string(model, str_to_id, name)
     token_strs = [t for _, t in tokens]
     print(f"  '{name}'  →  {token_strs}")
 ```
@@ -547,15 +499,15 @@ This tells you exactly what token sequences to expect when generating function n
 ### Find a specific character in the vocabulary
 
 ```python
-def find_token(vocab: dict[int, str], target: str) -> list[tuple[int, str]]:
+def find_token(str_to_id: dict[str, int], target: str) -> list[tuple[int, str]]:
     """Find all token IDs whose normalized string matches target."""
     results = []
-    for tid, raw in vocab.items():
-        if normalize_token(raw) == target:
-            results.append((tid, raw))
+    for raw_str, token_id in str_to_id.items():
+        if normalize_token(raw_str) == target:
+            results.append((token_id, raw_str))
     return results
 
-print(find_token(vocab, "{"))
+print(find_token(str_to_id, "{"))
 # [(5476, '{'), (90134, 'Ġ{')]    ← two tokens for '{', one with leading space
 ```
 

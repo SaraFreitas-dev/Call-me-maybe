@@ -21,7 +21,7 @@
 
 ## Why Constrained Decoding Exists
 
-At each generation step, the model outputs a probability score (logit) for every token in its vocabulary — roughly 150,000 tokens for Qwen3. Normally, you just pick the highest one.
+At each generation step, the model outputs a probability score (logit) for every token in its vocabulary — roughly 151,643 tokens for Qwen3. Normally, you just pick the highest one.
 
 The problem: **nothing stops the model from picking a token that breaks your JSON.**
 
@@ -66,13 +66,14 @@ def generate_constrained(
     prompt: str,
     fn_def: FunctionDefinition,
     all_fn_names: List[str],
-    vocab: dict,          # token_id (int) → token_string (str)
+    str_to_id: dict[str, int],   # token_string → token_id  (real vocab format)
+    id_to_str: dict[int, str],   # token_id → token_string  (reverse lookup)
     max_tokens: int = 200
 ) -> dict:
     """Generate a constrained function call JSON for a given prompt."""
 
-    # Step 1: tokenise the prompt
-    input_ids: List[int] = list(model.encode(prompt))
+    # Step 1: tokenise the prompt — encode() returns a 2D tensor, use [0].tolist()
+    input_ids: List[int] = model.encode(prompt)[0].tolist()
 
     generated_ids: List[int] = []
     partial_json: str = ""
@@ -83,7 +84,7 @@ def generate_constrained(
         logits: List[float] = list(model.get_logits_from_input_ids(all_ids))
 
         # Step 3: determine valid tokens at this position
-        valid_ids = get_valid_token_ids(partial_json, fn_def, all_fn_names, vocab)
+        valid_ids = get_valid_token_ids(partial_json, fn_def, all_fn_names, str_to_id)
 
         # Step 4: mask all invalid tokens
         for i in range(len(logits)):
@@ -95,7 +96,7 @@ def generate_constrained(
 
         # Step 6: append and update state
         generated_ids.append(next_id)
-        token_str = vocab[str(next_id)]      # or vocab[next_id] depending on format
+        token_str = id_to_str[next_id]   # use the reverse lookup: id → string
         partial_json += token_str
 
         # Step 7: check if generation is complete
@@ -111,46 +112,52 @@ The key function is `get_valid_token_ids` — it answers the question: *given wh
 
 ## The Vocabulary File
 
-`model.get_path_to_vocab_file()` returns the path to a JSON file that maps every token ID to its string representation.
+`model.get_path_to_vocab_file()` returns the path to a JSON file. The **real format** maps **token strings to integer IDs**:
 
 ```python
 import json
 
 vocab_path = model.get_path_to_vocab_file()
-with open(vocab_path) as f:
-    raw_vocab = json.load(f)
+with open(vocab_path, "r", encoding="utf-8") as f:
+    str_to_id: dict[str, int] = json.load(f)
 
-# raw_vocab might be structured as:
-# {"0": "!", "1": '"', "2": "#", ..., "5476": "{", "9313": "}", ...}
-# keys are string representations of integer IDs
+# Real structure:
+# {"!": 0, '"': 1, "#": 2, ..., "{": 5476, "}": 9313, ...}
+# key   = token string
+# value = integer ID
 
-# Build reverse lookup: token_string → token_id
-str_to_id: dict[str, int] = {v: int(k) for k, v in raw_vocab.items()}
-id_to_str: dict[int, str] = {int(k): v for k, v in raw_vocab.items()}
+# Build the reverse lookup for use after token selection
+id_to_str: dict[int, str] = {v: k for k, v in str_to_id.items()}
 ```
+
+> **⚠️ The key is the token string, the value is the ID** — not the other way around. Always build the reverse `id_to_str` lookup so you can go in both directions.
 
 ### What to look for in the vocabulary
 
 You need to find the token IDs for specific characters and strings. Build these lookup sets once at startup, not inside the generation loop:
 
 ```python
-def build_vocab_lookups(vocab: dict[int, str]) -> dict:
+def build_vocab_lookups(str_to_id: dict[str, int]) -> dict:
     """Pre-compute useful token sets from the vocabulary."""
 
-    # Single structural characters
-    open_brace   = {id for id, s in vocab.items() if s == "{"}
-    close_brace  = {id for id, s in vocab.items() if s == "}"}
-    open_quote   = {id for id, s in vocab.items() if s == '"'}
-    colon        = {id for id, s in vocab.items() if s == ":"}
-    comma        = {id for id, s in vocab.items() if s == ","}
+    # Normalize helper — handles Ġ (leading space) and other markers
+    def norm(s: str) -> str:
+        return s.replace("Ġ", " ").replace("Ċ", "\n")
+
+    # Single structural characters — find all variants (with/without leading space)
+    open_brace   = {tid for s, tid in str_to_id.items() if norm(s) == "{"}
+    close_brace  = {tid for s, tid in str_to_id.items() if norm(s) == "}"}
+    open_quote   = {tid for s, tid in str_to_id.items() if norm(s) == '"'}
+    colon        = {tid for s, tid in str_to_id.items() if norm(s).strip() == ":"}
+    comma        = {tid for s, tid in str_to_id.items() if norm(s).strip() == ","}
 
     # Numeric tokens — digits, decimal point, minus, scientific notation
-    numeric      = {id for id, s in vocab.items()
-                    if all(c in "0123456789.-+eE" for c in s) and s}
+    numeric      = {tid for s, tid in str_to_id.items()
+                    if norm(s) and all(c in "0123456789.-+eE" for c in norm(s))}
 
-    # Whitespace tokens (spaces between JSON elements)
-    whitespace   = {id for id, s in vocab.items()
-                    if s.strip() == "" and s != ""}
+    # Whitespace tokens
+    whitespace   = {tid for s, tid in str_to_id.items()
+                    if norm(s).strip() == "" and norm(s) != ""}
 
     return {
         "{": open_brace,
@@ -165,19 +172,19 @@ def build_vocab_lookups(vocab: dict[int, str]) -> dict:
 
 ### The leading-space problem
 
-Tokenizers attach spaces to the **beginning** of the following token, not the end of the previous one. A space before `{` is part of the `{` token, not a separate space token.
+Tokenizers attach spaces to the **beginning** of the following token, not the end of the previous one. A space before `"` is part of the `"` token, not a separate space token.
 
 ```
 Text:    '{"name": "fn_greet"}'
-Tokens:  ['{', '"', 'name', '"', ':', ' "', 'fn', '_greet', '"', '}']
+Tokens:  ['{', '"', 'name', '"', ':', 'Ġ"', 'fn', '_greet', '"', '}']
                                          ↑
-                              space is part of this token: ' "'
+                              space is part of this token: 'Ġ"'
 ```
 
-This matters when you search the vocabulary for `:`. There may be tokens for `:` and ` :` (with leading space) and `: ` (with trailing space). You need to account for all variants:
+This matters when you search the vocabulary for `:`. There may be tokens for `:` and `Ġ:` (with leading space). You need to account for all variants:
 
 ```python
-colon_variants = {id for id, s in vocab.items() if s.strip() == ":"}
+colon_variants = {tid for s, tid in str_to_id.items() if s.replace("Ġ", " ").strip() == ":"}
 ```
 
 ---
@@ -238,29 +245,18 @@ def get_current_state(partial: str, fn_def: FunctionDefinition) -> JSONState:
         return JSONState.AFTER_OPEN_BRACE
 
     if not partial.startswith('{"name"'):
-        return JSONState.IN_NAME_KEY   # still writing "name" key
+        return JSONState.IN_NAME_KEY
 
     if ',' not in partial:
-        # Still in the name section
         if partial.count('"') < 4:
-            return JSONState.IN_NAME_VALUE   # inside the function name string
+            return JSONState.IN_NAME_VALUE
         return JSONState.AFTER_NAME_VALUE
 
     if '"parameters"' not in partial:
         return JSONState.IN_PARAMS_KEY
 
-    params_section = partial.split('"parameters"')[1].strip()
-
-    if not params_section.startswith(':'):
-        return JSONState.AFTER_PARAMS_KEY
-
-    # We're inside the parameters object
-    inner = params_section.lstrip(': {').rstrip('}')
-
-    # Count how many param key-value pairs are complete
-    # ... (count colons, quotes, commas to determine progress)
-
-    return JSONState.IN_ARG_KEY   # simplified — expand for your implementation
+    # We're inside the parameters object — expand this logic for your implementation
+    return JSONState.IN_ARG_KEY
 ```
 
 > **Tip:** For reliability, track state as a variable that you update token by token, rather than re-parsing the full partial string each time. The walkthrough section below shows this approach.
@@ -275,102 +271,49 @@ Here's what tokens are valid at each stage of generating the output JSON:
 
 ```python
 # Only the open brace is valid
-valid = vocab_lookups["{"]
+valid = {tid for s, tid in str_to_id.items() if s.replace("Ġ", " ").strip() == "{"}
 ```
 
 ### Stage 2: After `{` → the key `"name"`
 
-The next tokens must spell out exactly `"name"`. You know what's coming — it's always the same literal:
-
 ```python
-# Find tokens that continue the literal sequence '"name"'
-# Given partial = "{", next must start '"'
-# Given partial = '{"', next must be 'n' or 'na' or 'nam' etc.
+# Next tokens must spell out exactly '"name"'
 already_written = len(partial) - 1  # chars after '{'
 target = '"name"'
 remaining = target[already_written:]
-valid = {id for id, s in vocab.items() if remaining.startswith(s)}
+valid = {tid for s, tid in str_to_id.items() if remaining.startswith(s.replace("Ġ", " "))}
 ```
 
-### Stage 3: After `"name"` → `:`
-
-```python
-valid = vocab_lookups[":"]  # including space variants like ' :'
-```
-
-### Stage 4: Inside function name value → restricted to valid function names
-
-This is where the model makes its function selection decision, guided by the prompt semantics:
+### Stage 3: Inside function name value → restricted to valid function names
 
 ```python
 # partial ends with '{"name": "'
 # next tokens must continue one of the valid function names
-
 written_so_far = extract_name_value(partial)  # e.g. "" or "fn_" or "fn_greet"
 
 valid = set()
-for fn_name in all_function_names:          # ["fn_add_numbers", "fn_greet", ...]
+for fn_name in all_function_names:
     if fn_name.startswith(written_so_far):
         remaining = fn_name[len(written_so_far):]
-        # find all tokens that are a prefix of 'remaining'
-        for token_id, token_str in vocab.items():
-            if remaining.startswith(token_str):
-                valid.add(token_id)
+        for s, tid in str_to_id.items():
+            norm = s.replace("Ġ", " ")
+            if remaining.startswith(norm) and norm:
+                valid.add(tid)
 ```
 
-### Stage 5: After function name → closing `"` then `,`
+### Stage 4: Argument value → depends on schema type
 
 ```python
-# Close the name string, then comma to move to parameters
-if not name_closed:
-    valid = vocab_lookups['"']
-else:
-    valid = vocab_lookups[',']
-```
+param_type = current_fn.parameters[current_param].type
 
-### Stage 6: The literal `"parameters"` key
+if param_type == "number":
+    valid = get_numeric_tokens(str_to_id, partial_value)
 
-Same approach as `"name"` — it's a fixed literal, token by token.
+elif param_type == "string":
+    valid = get_string_tokens(str_to_id, in_string, partial_value)
 
-### Stage 7: After `"parameters":` → `{`
-
-```python
-valid = vocab_lookups["{"]
-```
-
-### Stage 8: Argument key → restricted to valid parameter names
-
-```python
-# Only the argument names from fn_def.parameters are valid here
-param_names = list(fn_def.parameters.keys())   # e.g. ["a", "b"] or ["name"]
-written = extract_current_key(partial)
-
-valid = set()
-for param_name in param_names:
-    if param_name not in already_written_params:
-        full_key = f'"{param_name}"'
-        remaining = full_key[len(written):]
-        for token_id, token_str in vocab.items():
-            if remaining.startswith(token_str):
-                valid.add(token_id)
-```
-
-### Stage 9: Argument value → depends on schema type
-
-This is where the type system kicks in. See the next section.
-
-### Stage 10: After each argument → `,` or `}`
-
-```python
-remaining_params = [p for p in fn_def.parameters if p not in written_params]
-
-if remaining_params:
-    valid = vocab_lookups[","]   # more params to write
-else:
-    valid = vocab_lookups["}"]   # close params object
-
-# Then after the outer params object closes:
-valid = vocab_lookups["}"]       # close the root object
+elif param_type == "boolean":
+    valid = get_boolean_tokens(str_to_id, partial_value)
 ```
 
 ---
@@ -381,26 +324,19 @@ This is where you use `fn_def.parameters[param_name].type` to decide which token
 
 ### `type: "number"`
 
-A JSON number can contain: digits `0-9`, decimal point `.`, minus sign `-`, plus `+`, and scientific notation `eE`. Nothing else.
-
 ```python
 def get_valid_number_tokens(
-    partial_value: str,
-    vocab: dict[int, str]
+    str_to_id: dict[str, int],
+    partial_value: str
 ) -> set[int]:
-    """
-    Returns token IDs that can legally continue a JSON number value.
-    partial_value is what's been written for this number so far (e.g. "26" or "3.")
-    """
+    """Returns token IDs that can legally continue a JSON number value."""
     valid = set()
 
-    for token_id, token_str in vocab.items():
-        candidate = partial_value + token_str
-
-        # Check if candidate is a valid prefix of a JSON number
-        # Valid prefixes: "-", "1", "1.", "1.5", "1e", "1e+", "1e+2" etc.
+    for s, tid in str_to_id.items():
+        norm = s.replace("Ġ", " ").strip()
+        candidate = partial_value + norm
         if is_valid_number_prefix(candidate):
-            valid.add(token_id)
+            valid.add(tid)
 
     return valid
 
@@ -408,64 +344,41 @@ def get_valid_number_tokens(
 def is_valid_number_prefix(s: str) -> bool:
     """Return True if s is a valid prefix of a JSON number."""
     import re
-    # Matches complete or partial JSON numbers
     pattern = r'^-?(?:\d+(?:\.\d*)?(?:[eE][+-]?\d*)?)?$'
     return bool(re.match(pattern, s))
 ```
 
-**Tricky part:** you also need to know when the number is **complete** so you can transition to the next state. A number is complete when the next character would be `,` or `}` or whitespace — i.e., when `partial_value` is a valid complete number:
-
-```python
-def is_complete_number(s: str) -> bool:
-    try:
-        float(s)
-        return True
-    except ValueError:
-        return False
-```
-
 ### `type: "string"`
-
-String values in JSON are wrapped in double quotes: `"hello"`. Inside the string, any character is valid except unescaped `"` and `\`.
 
 ```python
 def get_valid_string_tokens(
-    in_string: bool,        # True if we've opened the '"' already
-    string_content: str,    # what's been written inside the string so far
-    vocab: dict[int, str]
+    str_to_id: dict[str, int],
+    in_string: bool,
+    string_content: str
 ) -> set[int]:
 
     if not in_string:
-        # Next must be the opening quote
-        return {id for id, s in vocab.items() if s == '"'}
+        return {tid for s, tid in str_to_id.items() if s == '"'}
 
-    # Inside the string: any token that doesn't prematurely close it
     valid = set()
-    for token_id, token_str in vocab.items():
-        # Closing quote — valid when we want to end the string
-        if token_str == '"':
-            valid.add(token_id)
+    for s, tid in str_to_id.items():
+        if s == '"':
+            valid.add(tid)   # closing quote
             continue
-        # Any token that doesn't contain an unescaped quote is valid content
-        if '"' not in token_str and '\\' not in token_str:
-            valid.add(token_id)
-        # Tokens with escaped quotes (\") are also valid
-        elif '\\"' in token_str:
-            valid.add(token_id)
+        if '"' not in s and '\\' not in s:
+            valid.add(tid)   # any token without unescaped quote
+        elif '\\"' in s:
+            valid.add(tid)   # escaped quote is fine
 
     return valid
 ```
 
-**Note:** tracking whether you're "inside" or "outside" the string requires counting unescaped `"` characters in what's been generated so far for this value.
-
 ### `type: "boolean"`
-
-JSON booleans are exactly `true` or `false` (lowercase). This is a fixed set of tokens:
 
 ```python
 def get_valid_boolean_tokens(
-    partial_value: str,
-    vocab: dict[int, str]
+    str_to_id: dict[str, int],
+    partial_value: str
 ) -> set[int]:
     """Tokens that continue 'true' or 'false' from partial_value."""
     valid = set()
@@ -473,9 +386,10 @@ def get_valid_boolean_tokens(
     for target in ["true", "false"]:
         if target.startswith(partial_value):
             remaining = target[len(partial_value):]
-            for token_id, token_str in vocab.items():
-                if remaining.startswith(token_str):
-                    valid.add(token_id)
+            for s, tid in str_to_id.items():
+                norm = s.replace("Ġ", " ")
+                if remaining.startswith(norm) and norm:
+                    valid.add(tid)
 
     return valid
 ```
@@ -491,19 +405,13 @@ import math
 NEGATIVE_INF = -math.inf
 ```
 
-When you set a logit to `-math.inf`, the softmax calculation gives it a probability of exactly 0:
-
-```
-softmax(-inf) = exp(-inf) / sum(...) = 0 / sum(...) = 0
-```
-
-So it can **never** be selected — not even if all other tokens have very low logits.
+When you set a logit to `-math.inf`, the softmax calculation gives it a probability of exactly 0 — it can **never** be selected.
 
 ```python
 def apply_constraints(
-    logits: List[float],
+    logits: list[float],
     valid_token_ids: set[int]
-) -> List[float]:
+) -> list[float]:
     """Mask all tokens not in valid_token_ids to -inf."""
     constrained = logits.copy()
 
@@ -514,7 +422,7 @@ def apply_constraints(
     return constrained
 ```
 
-> **Watch out:** if `valid_token_ids` is empty (you've made a logic error and no tokens are valid), all logits become `-inf` and `argmax` will return index 0 or behave unpredictably. Always assert `len(valid_token_ids) > 0` before applying constraints.
+> **Watch out:** if `valid_token_ids` is empty, all logits become `-inf` and `argmax` will behave unpredictably. Always assert before applying constraints:
 
 ```python
 assert len(valid_token_ids) > 0, (
@@ -543,63 +451,63 @@ Let's trace through generating the output for `"Greet john"` step by step.
 
 ```
 partial: ""          state: START
-valid:   {"{"}
-model picks: "{"
+valid:   {tid for '{'}
+model picks: "{"     (id=5476 in Qwen3 vocab)
 → partial: "{"
 
 partial: "{"         state: AFTER_OPEN_BRACE
-valid:   {'"'}       ← start of '"name"' key
-model picks: '"'
+valid:   {tid for '"'}
+model picks: '"'     (id=1)
 → partial: '{"'
 
 partial: '{"'        state: IN_NAME_KEY
-valid:   {"n", "na", "nam", "name"}   ← tokens that start the word 'name'
-model picks: "name"
+valid:   tokens continuing '"name"' from position 1
+         → tids for "n", "na", "nam", "name"
+model picks: token for "name"
 → partial: '{"name'
 
 partial: '{"name'    state: IN_NAME_KEY
-valid:   {'"'}       ← closing the key
+valid:   {tid for '"'}   ← closing the key
 model picks: '"'
 → partial: '{"name"'
 
 partial: '{"name"'   state: AFTER_NAME_KEY
-valid:   {":", " :", ": "}
-model picks: ": "
+valid:   {tids for ":", "Ġ:", ": "}
+model picks: token for ": "
 → partial: '{"name": '
 
 partial: '{"name": ' state: BEFORE_NAME_VALUE
-valid:   {'"'}       ← open the name value string
+valid:   {tid for '"'}
 model picks: '"'
 → partial: '{"name": "'
 
 partial: '{"name": "' state: IN_NAME_VALUE
-valid: tokens that are prefixes of valid function names
-  "fn_add_numbers" → "fn", "fn_", "fn_a", ...
-  "fn_greet"       → "fn", "fn_", "fn_g", ...
+valid: tokens continuing any valid function name from ""
+  "fn_add_numbers" → tids for "fn", "fn_", "fn_a", ...
+  "fn_greet"       → tids for "fn", "fn_", "fn_g", ...
   "fn_reverse_string" → ...
 
 model sees "Greet john" → assigns highest logit to "fn_greet" prefix
-model picks: "fn_greet"   (or "fn" then "_greet" depending on tokenisation)
+model picks: token for "fn_greet"  (or "fn" then "_greet")
 → partial: '{"name": "fn_greet'
 
 partial: '{"name": "fn_greet'   state: IN_NAME_VALUE (complete)
-valid:   {'"'}
+valid:   {tid for '"'}
 model picks: '"'
 → partial: '{"name": "fn_greet"'
 
 partial: '{"name": "fn_greet"'   state: AFTER_NAME_VALUE
-valid:   {","}
+valid:   {tid for ','}
 model picks: ","
 → partial: '{"name": "fn_greet",'
 
-... (similar process for '"parameters"' key and ':' and '{') ...
+... (similar process for '"parameters"' key, ':', '{') ...
 
 → partial: '{"name": "fn_greet", "parameters": {"'
 
-partial ends with: '{"'  (inside parameters object, writing first key)
 state: IN_ARG_KEY
-valid: tokens that start '"name"'  ← only param for fn_greet is "name"
-model picks: "name"
+valid: tokens continuing '"name"'  ← only param for fn_greet is "name"
+model picks: token for "name"
 → partial: '{"name": "fn_greet", "parameters": {"name'
 
 → partial: '{"name": "fn_greet", "parameters": {"name"'
@@ -609,20 +517,20 @@ model picks: "name"
 state: IN_ARG_VALUE_STR (type is "string")
 valid: all printable non-quote tokens + closing '"'
 
-model extracts "john" from "Greet john" → picks "john"
+model extracts "john" from "Greet john" → picks token for "john"
 → partial: '{"name": "fn_greet", "parameters": {"name": "john'
 
-valid: {'"'}   ← must close the string
+valid: {tid for '"'}   ← must close the string
 model picks: '"'
 → partial: '{"name": "fn_greet", "parameters": {"name": "john"'
 
 state: AFTER_ARG_VALUE
-no more params → valid: {"}"}
+no more params → valid: {tid for '}'}
 model picks: "}"
 → partial: '{"name": "fn_greet", "parameters": {"name": "john"}'
 
 state: AFTER_PARAMS_CLOSE
-valid: {"}"}
+valid: {tid for '}'}
 model picks: "}"
 → partial: '{"name": "fn_greet", "parameters": {"name": "john"}}'
 
@@ -640,52 +548,62 @@ json.loads('{"name": "fn_greet", "parameters": {"name": "john"}}')
 def get_valid_token_ids(
     partial: str,
     fn_def: FunctionDefinition,
-    all_fn_names: List[str],
-    vocab: dict[int, str],
+    all_fn_names: list[str],
+    str_to_id: dict[str, int],   # token_string → token_id
     state: JSONState,
-    context: dict          # tracks: current_param, written_params, etc.
+    context: dict
 ) -> set[int]:
     """
     Central dispatch: given the current state and partial output,
     return the set of token IDs that are valid next tokens.
     """
 
+    def find(target: str) -> set[int]:
+        """Find token IDs whose normalized string equals target."""
+        return {tid for s, tid in str_to_id.items()
+                if s.replace("Ġ", " ") == target}
+
+    def find_strip(target: str) -> set[int]:
+        """Find token IDs whose stripped normalized string equals target."""
+        return {tid for s, tid in str_to_id.items()
+                if s.replace("Ġ", " ").strip() == target}
+
     if state == JSONState.START:
-        return tokens_equal(vocab, "{")
+        return find_strip("{")
 
     if state == JSONState.AFTER_OPEN_BRACE:
-        return tokens_equal(vocab, '"')
+        return find('"')
 
     if state == JSONState.IN_NAME_KEY:
-        return tokens_continuing(vocab, '"name"', context["name_key_written"])
+        return tokens_continuing(str_to_id, '"name"', context["name_key_written"])
 
     if state == JSONState.AFTER_NAME_KEY:
-        return tokens_equal(vocab, ":") | tokens_equal(vocab, ": ") | tokens_equal(vocab, " :")
+        return find_strip(":")
 
     if state == JSONState.BEFORE_NAME_VALUE:
-        return tokens_equal(vocab, '"')
+        return find('"')
 
     if state == JSONState.IN_NAME_VALUE:
         written = context["name_value_written"]
-        return tokens_continuing_any(vocab, all_fn_names, written)
+        return get_valid_name_tokens(str_to_id, all_fn_names, written)
 
     if state == JSONState.AFTER_NAME_VALUE:
-        return tokens_equal(vocab, '"')   # closing quote of name value
+        return find('"')   # closing quote of name value
 
     # ... continue for all states ...
 
     if state == JSONState.IN_ARG_VALUE_NUM:
-        return get_valid_number_tokens(context["current_value"], vocab)
+        return get_valid_number_tokens(str_to_id, context["current_value"])
 
     if state == JSONState.IN_ARG_VALUE_STR:
         return get_valid_string_tokens(
+            str_to_id=str_to_id,
             in_string=True,
-            string_content=context["current_value"],
-            vocab=vocab
+            string_content=context["current_value"]
         )
 
     if state == JSONState.IN_ARG_VALUE_BOOL:
-        return get_valid_boolean_tokens(context["current_value"], vocab)
+        return get_valid_boolean_tokens(str_to_id, context["current_value"])
 
     raise ValueError(f"Unhandled state: {state}")
 ```
@@ -694,35 +612,63 @@ def get_valid_token_ids(
 
 ## Common Mistakes
 
-### ❌ Forgetting whitespace tokens
+### ❌ Using `vocab[str(next_id)]` or `vocab[next_id]` to get the token string
 
-JSON allows optional whitespace between tokens. The model may want to emit ` ` (space) or `\n` between elements. Either allow whitespace tokens at structural positions, or strip them from your partial state tracking.
+The vocab format is `str → int`, not `int → str`. After picking `next_id`, you need the **reverse lookup**:
+
+```python
+# ❌ Wrong — vocab keys are strings, not IDs
+token_str = vocab[str(next_id)]
+token_str = vocab[next_id]
+
+# ✅ Correct — use the pre-built reverse lookup
+token_str = id_to_str[next_id]
+```
+
+---
+
+### ❌ Forgetting `.tolist()` on encode output
+
+`model.encode()` returns a **2D tensor**, not a list of ints:
+
+```python
+# ❌ Wrong — returns a 2D tensor
+input_ids = model.encode(prompt)
+
+# ✅ Correct — flatten to a list of ints
+input_ids = model.encode(prompt)[0].tolist()
+```
+
+---
 
 ### ❌ Searching the whole vocabulary in the hot loop
 
-The generation loop runs hundreds of times per prompt. If you search all 150,000 tokens every step, it'll be slow. **Pre-compute** fixed sets (structural chars, number chars) at startup. Only do dynamic searches (function name prefixes, param name prefixes) when in those specific states.
+Pre-compute fixed sets at startup. Only do dynamic searches (function name prefixes, param name prefixes) when in those specific states.
+
+---
 
 ### ❌ Assuming tokens are single characters
 
-A token like `"fn_greet"` might be emitted as one token `fn_greet`, or as `fn` + `_greet`, or as `fn` + `_` + `greet` — it depends on the vocabulary. Your prefix-matching logic must handle all of these.
+A token like `"fn_greet"` might be emitted as one token `fn_greet`, or as `fn` + `_greet`. Your prefix-matching logic must handle all cases:
 
 ```python
-# Wrong: assuming 'fn_greet' is always one token
-valid = {id for id, s in vocab.items() if s == "fn_greet"}
+# ❌ Wrong: assuming 'fn_greet' is always one token
+valid = {tid for s, tid in str_to_id.items() if s == "fn_greet"}
 
-# Correct: allow any token that continues what's needed
-def tokens_continuing(vocab, target: str, written: str) -> set[int]:
+# ✅ Correct: allow any token that continues what's needed
+def tokens_continuing(str_to_id, target: str, written: str) -> set[int]:
     remaining = target[len(written):]
-    return {id for id, s in vocab.items() if remaining.startswith(s) and s != ""}
+    return {tid for s, tid in str_to_id.items()
+            if remaining.startswith(s.replace("Ġ", " ")) and s.replace("Ġ", " ")}
 ```
+
+---
 
 ### ❌ Not handling the closing `}` of the root object
 
 After the parameters object closes with `}`, you still need one more `}` to close the root object. Make sure your state machine has a state for this.
 
-### ❌ Treating `number` as integer-only
-
-The schema says `number` — this means both integers and floats. `2` and `2.0` and `2.5` are all valid. Don't restrict to digits only; allow `.` and `-` and `e`.
+---
 
 ### ❌ Hardcoding function names
 

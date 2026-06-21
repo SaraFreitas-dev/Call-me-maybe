@@ -46,7 +46,6 @@ def load_function_definitions(path: str) -> list[FunctionDefinition]:
     except ValidationError as e:
         print(f"Error loading FunctionDefinition JSON: {e}")
         sys.exit(1)
-    
 
 
 def load_test_prompts(path: str) -> list[PromptEntry]:

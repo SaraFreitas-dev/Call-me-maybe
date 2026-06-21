@@ -10,12 +10,14 @@ Run the constrained decoding process.
 Save generated function calls to the output file.
 Coordinate the overall execution flow.
 """
-from llm_sdk.llm_sdk import Small_LLM_Model
+from llm_sdk import Small_LLM_Model
 from src.data_loader import load_function_definitions, load_test_prompts
 from src.vocab_loader import load_vocab
 
 
 def main() -> None:
+    model = Small_LLM_Model()
+
     fn_defs = load_function_definitions("data/input/functions_definition.json")
     prompts = load_test_prompts("data/input/function_calling_tests.json")
 
@@ -27,7 +29,7 @@ def main() -> None:
     for p in prompts:
         print(f"  - {p.prompt}")
 
-    model = Small_LLM_Model()
+
     str_to_id = load_vocab(model)
 
     for token_str, token_id in str_to_id.items():

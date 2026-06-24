@@ -35,18 +35,26 @@ def build__prompt_request(user_request: str,
                               b: number): Add two numbers together...
     - Correct output expected (function call)
     """
+    fn_defs_lines: list[str] = []
+    fn_defs_block: list[str] = []
+    params_str: str = ""
+    
+    for fn in fn_defs:
+        # build a: number, b: number (e.g.)
+        param_parts = []
+        for param_name, param_schema in fn.parameters.items():
+            param_parts.append(f"{param_name}: {param_schema.type}")
+        params_str = ", ".join(param_parts)
 
+        # Name, description, parameters and returns
+        fn_defs_lines.append(f"- {fn.name}({params_str}): {fn.description}")
+    fn_defs_block = "\n".join(fn_defs_lines)
 
-
-
-"""
-You are a function calling assistant.
-
-Available functions:
-- fn_greet(name: string): Generate a greeting...
-
-User request: "Greet john"
-
-Output the correct function call as JSON:
-{"name": "
-"""
+    return (
+        "You are a function calling assistant.\n\n"
+        "Available functions:\n"
+        f"{fn_defs_block}\n\n"
+        f"User request: {user_request}\n\n"
+        "Output the correct function call as JSON:\n"
+        '{"name": "'
+    )

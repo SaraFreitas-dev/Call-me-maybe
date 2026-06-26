@@ -16,7 +16,7 @@ class PromptEntry(BaseModel):
 
 class ParameterSchema(BaseModel):
     """
-    Represents the type for each parameter on the 
+    Represents the type for each parameter on the
     functions_definition.json - JSON file:
     "string", "number", "integer", and "boolean"
     """

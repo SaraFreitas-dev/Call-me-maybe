@@ -18,7 +18,7 @@ def load_vocab(llm_model: Any) -> dict[str, int]:
     hugging_face_path = llm_model.get_path_to_vocab_file()
     try:
         with open(hugging_face_path, 'r') as file:
-             data = json.load(file)
+            data = json.load(file)
         return data
     except FileNotFoundError:
         print(f"Error: file not found: {hugging_face_path}")
@@ -43,7 +43,7 @@ def build_id_to_str(str_to_id: dict[str, int]) -> dict[int, str]:
 def replace_space_markers(token_str: str) -> str:
     """
     Converts the special BPE markers into normal spacing
-    e.g.: 
+    e.g.:
     "Ġthe"  →  " the"  (Ġ turns into a space)
     "{"     →  "{"     (has no marker, so it remains the same)
     "Ċ"     →  "\n"    (Ċ becames a newline)

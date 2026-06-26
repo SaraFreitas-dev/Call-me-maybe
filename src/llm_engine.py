@@ -38,7 +38,7 @@ def build__prompt_request(user_request: str,
     fn_defs_lines: list[str] = []
     fn_defs_block: list[str] = []
     params_str: str = ""
-    
+
     for fn in fn_defs:
         # build a: number, b: number (e.g.)
         param_parts = []

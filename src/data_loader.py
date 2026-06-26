@@ -21,7 +21,7 @@ def _load_json_file(path: str) -> list[dict[str, Any]]:
     """
     try:
         with open(path, 'r') as file:
-             data = json.load(file)
+            data = json.load(file)
         return data
     except FileNotFoundError:
         print(f"Error: file not found: {path}")

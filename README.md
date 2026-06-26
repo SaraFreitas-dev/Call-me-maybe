@@ -16,6 +16,9 @@
 ### PROMPT ENGINEERING - USED ON LLM_ENGINE (build__prompt_request())
 https://huggingface.co/docs/transformers/main/chat_templating#tool-use--function-calling
 
+### PARSE ARGS (argparse import)
+https://mimo.org/glossary/python/argparse
+
 ```text
 src/
 ├── __main__.py

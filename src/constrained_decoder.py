@@ -193,6 +193,7 @@ class ConstrainedDecoder:
         """
         pass
 
+
     def generate_function_call(
             self,
             prompt: str,

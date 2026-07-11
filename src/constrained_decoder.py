@@ -15,7 +15,9 @@ from src.data_loader import load_function_definitions, load_test_prompts
 from src.vocab_loader import (load_vocab, build_id_to_str,
                               build_token_categories)
 from src.schemas import (FunctionDefinition, PromptEntry, FunctionCall)
+from src.vocab_loader import replace_space_markers
 from typing import Any
+import re
 
 
 class ConstrainedDecoder:
@@ -40,7 +42,7 @@ class ConstrainedDecoder:
         self.token_categories: dict[str, set[int]] = build_token_categories(vocab)
 
     def _get_valid_bool_tokens(
-            str_to_id: dict[str, int],
+            self,
             partial_value: str) -> set[int]:
         """
         Returns the set of token IDs that can legally continue
@@ -55,10 +57,22 @@ class ConstrainedDecoder:
             partial_value = "t"  → tokens continuing "rue"
             partial_value = "tr" → tokens continuing "ue"FunctionCall
         """
-        pass
+        valid: set[int] = set()
+        remaining: str = ""
+        normalized: str = ""
+
+        for target in ["true", "false"]:
+            if target.startswith(partial_value.lower()):
+                remaining = target[len(partial_value):]
+            for token_str, token_id in self.vocab.items():
+                normalized = replace_space_markers(token_str)
+                if remaining.startswith(normalized) and normalized:
+                    valid.add(token_id)
+        return valid
+
 
     def _get_valid_number_tokens(
-            str_to_id: dict[str, int],
+            self,
             partial_value: str) -> set[int]:
         """
         Returns the set of token IDs that can legally continue
@@ -74,10 +88,20 @@ class ConstrainedDecoder:
             partial_value = "2"   → tokens continuing a number: ".", "e", digits
             partial_value = "2."  → tokens continuing a decimal: digits only
         """
-        pass
+        valid: set[int] = set()
+        normalized: str = ""
+
+        pattern = r'^-?(\d+(\.\d*)?([eE][+-]?\d*)?)?$'
+
+        for token_str, token_id in self.vocab.items():
+            normalized = replace_space_markers(token_str)
+            if normalized and re.match(pattern, partial_value + normalized):
+                valid.add(token_id)
+        return valid
+
 
     def _get_valid_string_tokens(
-            str_to_id: dict[str, int],
+            self,
             in_string: bool,
             partial_value: str) -> set[int]:
         """
@@ -94,10 +118,25 @@ class ConstrainedDecoder:
             in_string = False → only {id of '"'}
             in_string = True  → all printable tokens + closing '"'
         """
+        valid: set[int] = set()
+        normalized: str = ""
+
+        if not in_string:
+            return self.token_categories['"']
+        else:
+            for token_str, token_id in self.vocab.items():
+                normalized = replace_space_markers(token_str)
+                if normalized == '"':
+                    valid.add(token_id)
+                elif '"' not in normalized:
+                    valid.add(token_id)
+                else:
+                    continue
+        return valid
+
 
     def _get_valid_name_value_tokens(
-            str_to_id: dict[str, int],
-            fn_defs: list[FunctionDefinition],
+            self,
             written_so_far: str) -> set[int]:
         """
         Returns the set of token IDs that can legally continue
@@ -110,15 +149,32 @@ class ConstrainedDecoder:
 
         e.g.:
             fn_defs has ["fn_greet", "fn_add_numbers"]
-            written_so_far = ""    → tokens starting "fn_greet" or "fn_add_numbers"
-            written_so_far = "fn_" → tokens continuing "greet" or "add_numbers"
+            written_so_far = ""    → tokens starting
+                                    "fn_greet" or "fn_add_numbers"
+            written_so_far = "fn_" → tokens continuing
+                                    "greet" or "add_numbers"
             written_so_far = "fn_greet" → only {id of '"'}
         """
-        pass
+        valid: set[int] = set()
+        remaining: str = ""
+        normalized: str = ""
+
+        for fn in self.fn_defs:
+            if written_so_far == fn.name:
+                # The name is complete - close the bracket
+                return self.token_categories['"']
+
+            if fn.name.startswith(written_so_far.lower()):
+                remaining = fn.name[len(written_so_far):]
+                for token_str, token_id in self.vocab.items():
+                    normalized = replace_space_markers(token_str)
+                    if remaining.startswith(normalized) and normalized:
+                        valid.add(token_id)
+        return valid
+
 
     def _get_valid_param_key_tokens(
-            str_to_id: dict[str, int],
-            fn_def: FunctionDefinition,
+            self,
             written_params: list[str],
             written_so_far: str) -> set[int]:
         """
@@ -138,12 +194,8 @@ class ConstrainedDecoder:
         pass
 
     def generate_function_call(
-            model: Any,
+            self,
             prompt: str,
-            fn_defs: list[FunctionDefinition],
-            str_to_id: dict[str, int],
-            id_to_str: dict[int, str],
-            categories: dict[str, set[int]],
             max_tokens: int = 200) -> FunctionCall:
         """
         Generates a complete, schema-valid JSON function call for
@@ -164,7 +216,7 @@ class ConstrainedDecoder:
         """
         pass
 
-    def get_current_state(partial_json: str) -> str:
+    def get_current_state(self, partial_json: str) -> str:
         """
         Infers the current JSON generation state from the partial
         output generated so far.

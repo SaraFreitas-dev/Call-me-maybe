@@ -1,7 +1,3 @@
-"""
-Acts as the interface between the application and the language model.
-Talks to the model and builds the prompts
-"""
 from typing import Any
 from llm_sdk import Small_LLM_Model
 from src.schemas import FunctionDefinition

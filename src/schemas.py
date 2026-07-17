@@ -1,8 +1,3 @@
-"""
-Defines the project's data structures and validation models
-For each JSON file:
-input (definitions & tests) and output(results)
-"""
 from pydantic import BaseModel, field_validator
 
 

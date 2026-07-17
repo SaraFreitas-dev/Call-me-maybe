@@ -1,15 +1,3 @@
-"""
-ConstrainedDecoder
-
-    ├── __init__          → inicializa model, vocab, categories, fn_defs
-    ├── get_current_state → state machine
-    ├── get_valid_bool_tokens
-    ├── get_valid_number_tokens
-    ├── get_valid_string_tokens
-    ├── get_valid_name_value_tokens
-    ├── get_valid_param_key_tokens
-    └── generate_function_call   → o loop principal
-"""
 from llm_sdk import Small_LLM_Model
 from src.data_loader import load_function_definitions, load_test_prompts
 from src.vocab_loader import (load_vocab, build_id_to_str,
@@ -175,6 +163,7 @@ class ConstrainedDecoder:
 
     def _get_valid_param_key_tokens(
             self,
+            fn_def: FunctionDefinition,
             written_params: list[str],
             written_so_far: str) -> set[int]:
         """
@@ -190,6 +179,41 @@ class ConstrainedDecoder:
             written_params = []    → tokens for "a" or "b"
             written_params = ["a"] → tokens for "b" only
             written_so_far = "b"   → only {id of '"'} to close the key
+        """
+        valid: set[int] = set()
+        remaining: str = ""
+        normalized: str = ""
+
+        for fn_keys in fn_def.parameters.keys():
+            if fn_keys in written_params:
+                continue
+            if written_so_far == fn_keys:
+                return self.token_categories['"']
+            if fn_keys.startswith(written_so_far):
+                remaining = fn_keys[len(written_so_far):] 
+                for token_str, token_id in self.vocab.items():
+                    normalized = replace_space_markers(token_str)
+                    if remaining.startswith(normalized) and normalized:
+                        valid.add(token_id)
+        return valid
+
+
+    def get_current_state(self, partial_json: str) -> str:
+        """
+        Infers the current JSON generation state from the partial
+        output generated so far.
+
+        Returns one of the following state strings:
+            "start"           → nothing written yet, expect '{'
+            "name_key"        → writing the literal key "name"
+            "name_value"      → writing the function name string
+            "params_key"      → writing the literal key "parameters"
+            "params_open"     → wrote '"parameters":', expect '{'
+            "arg_key"         → writing an argument name key
+            "arg_value"       → writing an argument value
+            "after_arg_value" → wrote a value, expect ',' or '}'
+            "closing"         → closing the root object, expect '}'
+            "complete"        → generation is finished
         """
         pass
 
@@ -214,24 +238,5 @@ class ConstrainedDecoder:
 
         Returns a FunctionCall object ready to be written to the
         output JSON file.
-        """
-        pass
-
-    def get_current_state(self, partial_json: str) -> str:
-        """
-        Infers the current JSON generation state from the partial
-        output generated so far.
-
-        Returns one of the following state strings:
-            "start"           → nothing written yet, expect '{'
-            "name_key"        → writing the literal key "name"
-            "name_value"      → writing the function name string
-            "params_key"      → writing the literal key "parameters"
-            "params_open"     → wrote '"parameters":', expect '{'
-            "arg_key"         → writing an argument name key
-            "arg_value"       → writing an argument value
-            "after_arg_value" → wrote a value, expect ',' or '}'
-            "closing"         → closing the root object, expect '}'
-            "complete"        → generation is finished
         """
         pass

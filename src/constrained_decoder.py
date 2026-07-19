@@ -1,8 +1,6 @@
-from llm_sdk import Small_LLM_Model
-from src.data_loader import load_function_definitions, load_test_prompts
-from src.vocab_loader import (load_vocab, build_id_to_str,
+from src.vocab_loader import (build_id_to_str,
                               build_token_categories)
-from src.schemas import (FunctionDefinition, PromptEntry, FunctionCall)
+from src.schemas import (FunctionDefinition, FunctionCall)
 from src.vocab_loader import replace_space_markers
 from typing import Any
 import re
@@ -205,17 +203,30 @@ class ConstrainedDecoder:
 
         Returns one of the following state strings:
             "start"           → nothing written yet, expect '{'
-            "name_key"        → writing the literal key "name"
-            "name_value"      → writing the function name string
-            "params_key"      → writing the literal key "parameters"
-            "params_open"     → wrote '"parameters":', expect '{'
-            "arg_key"         → writing an argument name key
-            "arg_value"       → writing an argument value
-            "after_arg_value" → wrote a value, expect ',' or '}'
-            "closing"         → closing the root object, expect '}'
-            "complete"        → generation is finished
+            "name_value" → _get_valid_name_value_tokens
+            "arg_key"    → _get_valid_param_key_tokens
+            "arg_value"  → _get_valid_X_tokens (number/string/boolean)
+            "complete"   → generation is finished | To know when to stop the loop
+            "structural" → token_categories ('{', ',', ':', etc.)
         """
-        pass
+        if not partial_json:
+            return "start"
+        elif partial_json.endswith("}}"):
+            return "complete"
+        elif 'parameters' not in partial_json:
+            if partial_json.count('"') < 4:
+                return "name_value"
+            else:
+                return "structural"
+        else:
+            # Already contains "parameters"
+            params_content = partial_json.split('"parameters"')[-1]
+            if ':' not in params_content:
+                return "arg_key"
+            elif partial_json[-1] not in [',', '}', ' ']:
+                return "arg_value"
+            else:
+                return "structural"
 
 
     def generate_function_call(
@@ -238,5 +249,14 @@ class ConstrainedDecoder:
 
         Returns a FunctionCall object ready to be written to the
         output JSON file.
+
+        estado = get_current_state(partial_json)
+
+        if "start"      → valid = token_categories["{"]
+        if "name_value" → valid = _get_valid_name_value_tokens(...)
+        if "arg_key"    → valid = _get_valid_param_key_tokens(...)
+        if "arg_value"  → valid = _get_valid_X_tokens(...)
+        if "structural" → valid = token_categories[token_certo]
+        if "complete"   → stops
         """
         pass

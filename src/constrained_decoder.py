@@ -196,7 +196,7 @@ class ConstrainedDecoder:
         return valid
 
 
-    def get_current_state(self, partial_json: str) -> str:
+    def _get_current_state(self, partial_json: str) -> str:
         """
         Infers the current JSON generation state from the partial
         output generated so far.
@@ -229,6 +229,60 @@ class ConstrainedDecoder:
                 return "structural"
 
 
+    def _get_tokens_for_state(self,
+                              partial_json: str,
+                              fn_def: FunctionDefinition | None,
+                              written_params: list[str],
+                              current_param: str,
+                              written_so_far: str,
+                              in_string: bool) -> set[int]:
+        """
+        Central dispatcher for constrained decoding.
+        Returns the set of valid token IDs for the current
+        JSON generation state and context.
+        """
+        state: str = self._get_current_state(partial_json)
+        valid_tokens: set[int] = set()
+
+        if state == "start":
+            valid_tokens = self.token_categories["{"]
+        elif state == "name_value":
+            valid_tokens = self._get_valid_name_value_tokens(written_so_far)
+        elif state == "arg_key":
+            valid_tokens = self._get_valid_param_key_tokens(fn_def, written_params, written_so_far)
+
+        elif state == "arg_value":
+            param_type = fn_def.parameters[current_param].type
+            if param_type == "number":
+                valid_tokens = self._get_valid_number_tokens(written_so_far)
+            elif param_type == "string":
+                valid_tokens = self._get_valid_string_tokens(in_string, written_so_far)
+            elif param_type == "boolean":
+                valid_tokens = self._get_valid_bool_tokens(written_so_far)
+
+        elif state == "structural":
+            last = partial_json.rstrip()[-1]
+            
+            if last == "{":
+                valid_tokens = self.token_categories['"']
+            elif last == ":":
+                valid_tokens = self.token_categories['"']
+            elif last == ",":
+                valid_tokens = self.token_categories['"']
+            elif last == '"':
+                # depois de fechar uma aspa → dois pontos ou vírgula
+                if '"parameters"' not in partial_json:
+                    valid_tokens = self.token_categories[',']
+                else:
+                    valid_tokens = self.token_categories[':']
+
+        elif state == "complete":
+            return set()
+
+        return valid_tokens
+
+
+
     def generate_function_call(
             self,
             prompt: str,
@@ -250,13 +304,5 @@ class ConstrainedDecoder:
         Returns a FunctionCall object ready to be written to the
         output JSON file.
 
-        estado = get_current_state(partial_json)
-
-        if "start"      → valid = token_categories["{"]
-        if "name_value" → valid = _get_valid_name_value_tokens(...)
-        if "arg_key"    → valid = _get_valid_param_key_tokens(...)
-        if "arg_value"  → valid = _get_valid_X_tokens(...)
-        if "structural" → valid = token_categories[token_certo]
-        if "complete"   → stops
         """
         pass

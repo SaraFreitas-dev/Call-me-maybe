@@ -14,7 +14,7 @@ def create_model(model_name: str = "Qwen/Qwen3-0.6B") -> Any:
     return Small_LLM_Model(model_name=model_name)
 
 
-def build__prompt_request(user_request: str,
+def build_prompt_request(user_request: str,
                           fn_defs: list[FunctionDefinition]) -> str:
     """
     Rceives the user prompt and the lists of available functions

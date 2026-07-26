@@ -27,6 +27,7 @@ class ConstrainedDecoder:
         self.id_to_str: dict[int, str] = build_id_to_str(vocab)
         self.token_categories: dict[str, set[int]] = build_token_categories(vocab)
 
+    # ──────────────────────────── Token validators ────────────────────────────
     def _get_valid_bool_tokens(
             self,
             partial_value: str) -> set[int]:
@@ -56,7 +57,6 @@ class ConstrainedDecoder:
                     valid.add(token_id)
         return valid
 
-
     def _get_valid_number_tokens(
             self,
             partial_value: str) -> set[int]:
@@ -84,7 +84,6 @@ class ConstrainedDecoder:
             if normalized and re.match(pattern, partial_value + normalized):
                 valid.add(token_id)
         return valid
-
 
     def _get_valid_string_tokens(
             self,
@@ -120,7 +119,7 @@ class ConstrainedDecoder:
                     continue
         return valid
 
-
+    # ─────────────────────── Name and key validators ───────────────────────
     def _get_valid_name_value_tokens(
             self,
             written_so_far: str) -> set[int]:
@@ -158,7 +157,6 @@ class ConstrainedDecoder:
                         valid.add(token_id)
         return valid
 
-
     def _get_valid_param_key_tokens(
             self,
             fn_def: FunctionDefinition,
@@ -195,6 +193,7 @@ class ConstrainedDecoder:
                         valid.add(token_id)
         return valid
 
+    # ─────────────────────── State machine ───────────────────────
 
     def _get_current_state(self, partial_json: str) -> str:
         """
@@ -227,7 +226,6 @@ class ConstrainedDecoder:
                 return "arg_value"
             else:
                 return "structural"
-
 
     def _get_tokens_for_state(self,
                               partial_json: str,
@@ -281,28 +279,27 @@ class ConstrainedDecoder:
 
         return valid_tokens
 
-
+    # ──────────────────── Main generation loop ────────────────────
 
     def generate_function_call(
             self,
             prompt: str,
             max_tokens: int = 200) -> FunctionCall:
         """
-        Generates a complete, schema-valid JSON function call for
-        the given prompt using constrained decoding.
+        Generates a schema-valid JSON function call for the given prompt
+        using token-by-token constrained decoding.
 
-        At each generation step:
-        1. Gets logits for all vocabulary tokens from the model
-        2. Determines which tokens are valid at the current JSON position
-        3. Sets all invalid token logits to -inf
-        4. Selects the token with the highest remaining logit
-        5. Appends the token to the partial output
+        Builds a full prompt from the user request and available functions,
+        encodes it, then iteratively selects the next valid token until
+        the JSON output is complete. At each step, invalid tokens are
+        masked to -inf to guarantee structural and schema compliance.
 
-        This guarantees 100% valid JSON that conforms to the schema
-        defined in fn_defs, regardless of the model's size.
+        Args:
+            prompt:     The original natural language user request.
+            max_tokens: Maximum number of tokens to generate before stopping.
 
-        Returns a FunctionCall object ready to be written to the
-        output JSON file.
-
+        Returns:
+            A FunctionCall instance containing the original prompt, the
+            selected function name, and the extracted parameters.
         """
         pass

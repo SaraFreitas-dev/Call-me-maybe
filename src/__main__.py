@@ -11,6 +11,7 @@ Save generated function calls to the output file.
 Coordinate the overall execution flow.
 """
 import argparse
+import src.env_setup  # noqa: F401  (import sets HF_HOME as a side effect)
 from llm_sdk import Small_LLM_Model
 from src.data_loader import load_function_definitions, load_test_prompts
 from src.vocab_loader import load_vocab

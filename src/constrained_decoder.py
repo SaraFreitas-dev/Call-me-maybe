@@ -1,6 +1,7 @@
 from src.vocab_loader import (build_id_to_str,
                               build_token_categories)
 from src.schemas import (FunctionDefinition, FunctionCall)
+from src.llm_engine import build_prompt_request
 from src.vocab_loader import replace_space_markers
 from typing import Any
 import re
@@ -23,11 +24,11 @@ class ConstrainedDecoder:
                  ) -> None:
         self.model = model
         self.fn_defs = fn_defs
-        self.vocab = vocab
+        self.vocab = vocab  # token_string → token_id  (real vocab format)
         self.id_to_str: dict[int, str] = build_id_to_str(vocab)
         self.token_categories: dict[str, set[int]] = build_token_categories(vocab)
 
-    # ──────────────────────────── Token validators ────────────────────────────
+    # ──────────────────────── Token validators ────────────────────────
     def _get_valid_bool_tokens(
             self,
             partial_value: str) -> set[int]:
@@ -119,7 +120,7 @@ class ConstrainedDecoder:
                     continue
         return valid
 
-    # ─────────────────────── Name and key validators ───────────────────────
+    # ──────────────────── Name and key validators ────────────────────
     def _get_valid_name_value_tokens(
             self,
             written_so_far: str) -> set[int]:
@@ -279,6 +280,27 @@ class ConstrainedDecoder:
 
         return valid_tokens
 
+    def _apply_token(self,
+                  state: str,
+                  token_text: str,
+                  fn_def: FunctionDefinition | None,
+                  written_params: list[str],
+                  current_param: str,
+                  written_so_far: str,
+                  in_string: bool
+                  ) -> tuple[FunctionDefinition | None, list[str], str, str, bool]:
+        """
+        Given the state BEFORE this token and the chosen token's text,
+        Updates the parsing state given the token just generated.
+        """
+        if state == "name_value":
+            ...
+        elif state == "arg_key":
+            ...
+        elif state == "arg_value":
+            ...
+        return fn_def, written_params, current_param, written_so_far, in_string
+
     # ──────────────────── Main generation loop ────────────────────
 
     def generate_function_call(
@@ -302,4 +324,54 @@ class ConstrainedDecoder:
             A FunctionCall instance containing the original prompt, the
             selected function name, and the extracted parameters.
         """
-        pass
+
+        # tokenize the prompt — encode() returns a 2D tensor
+        full_prompt = build_prompt_request(prompt, self.fn_defs)
+        input_ids = self.model.encode(full_prompt)[0].tolist()
+
+        generated_ids: list[int] = []
+        partial_json = '{"name": "'
+        written_params: list[str] = []
+        current_param: str = ""
+        written_so_far: str = ""
+        in_string: bool = False
+        fn_def: FunctionDefinition | None = None
+
+        for _ in range(max_tokens):
+            # get logits for all vocabulary tokens
+            all_ids = input_ids + generated_ids
+            logits: list[float] = list(self.model.get_logits_from_input_ids(all_ids))
+
+            # determine valid tokens at this position
+            state = self._get_current_state(partial_json)
+            valid_ids = self._get_tokens_for_state(
+                partial_json,
+                fn_def,
+                written_params,
+                current_param,
+                written_so_far,
+                in_string
+            )
+
+            # mask all invalid tokens
+            masked_logits = [
+                logit if i in valid_ids else float('-inf')
+                for i, logit in enumerate(logits)
+            ]
+            token_id = masked_logits.index(max(masked_logits))
+            generated_ids.append(token_id)
+
+            token_str = self.id_to_str[token_id]
+            token_text = replace_space_markers(token_str)
+            partial_json += token_text
+
+            (fn_def,
+             written_params,
+             current_param,
+             written_so_far,
+             in_string) = self._apply_token(
+                 state, token_text, fn_def, written_params,
+                 current_param, written_so_far, in_string)
+
+            if self._get_current_state(partial_json) == "complete":
+                break

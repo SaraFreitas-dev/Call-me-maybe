@@ -26,7 +26,8 @@ class ConstrainedDecoder:
         self.fn_defs = fn_defs
         self.vocab = vocab  # token_string → token_id  (real vocab format)
         self.id_to_str: dict[int, str] = build_id_to_str(vocab)
-        self.token_categories: dict[str, set[int]] = build_token_categories(vocab)
+        self.token_categories: dict[str, set[int]] = build_token_categories(
+            vocab)
 
     # ──────────────────────── Token validators ────────────────────────
     def _get_valid_bool_tokens(
@@ -72,8 +73,8 @@ class ConstrainedDecoder:
 
         e.g.:
             partial_value = ""    → tokens starting any valid number
-            partial_value = "2"   → tokens continuing a number: ".", "e", digits
-            partial_value = "2."  → tokens continuing a decimal: digits only
+            partial_value = "2"   → continuing a number: ".", "e", digits
+            partial_value = "2."  → continuing a decimal: digits only
         """
         valid: set[int] = set()
         normalized: str = ""
@@ -187,7 +188,7 @@ class ConstrainedDecoder:
             if written_so_far == fn_keys:
                 return self.token_categories['"']
             if fn_keys.startswith(written_so_far):
-                remaining = fn_keys[len(written_so_far):] 
+                remaining = fn_keys[len(written_so_far):]
                 for token_str, token_id in self.vocab.items():
                     normalized = replace_space_markers(token_str)
                     if remaining.startswith(normalized) and normalized:
@@ -206,7 +207,7 @@ class ConstrainedDecoder:
             "name_value" → _get_valid_name_value_tokens
             "arg_key"    → _get_valid_param_key_tokens
             "arg_value"  → _get_valid_X_tokens (number/string/boolean)
-            "complete"   → generation is finished | To know when to stop the loop
+            "complete"   → generation is finished
             "structural" → token_categories ('{', ',', ':', etc.)
         """
         if not partial_json:
@@ -248,20 +249,23 @@ class ConstrainedDecoder:
         elif state == "name_value":
             valid_tokens = self._get_valid_name_value_tokens(written_so_far)
         elif state == "arg_key":
-            valid_tokens = self._get_valid_param_key_tokens(fn_def, written_params, written_so_far)
+            valid_tokens = self._get_valid_param_key_tokens(fn_def,
+                                                            written_params,
+                                                            written_so_far)
 
         elif state == "arg_value":
             param_type = fn_def.parameters[current_param].type
             if param_type == "number":
                 valid_tokens = self._get_valid_number_tokens(written_so_far)
             elif param_type == "string":
-                valid_tokens = self._get_valid_string_tokens(in_string, written_so_far)
+                valid_tokens = self._get_valid_string_tokens(in_string,
+                                                             written_so_far)
             elif param_type == "boolean":
                 valid_tokens = self._get_valid_bool_tokens(written_so_far)
 
         elif state == "structural":
             last = partial_json.rstrip()[-1]
-            
+
             if last == "{":
                 valid_tokens = self.token_categories['"']
             elif last == ":":
@@ -281,14 +285,15 @@ class ConstrainedDecoder:
         return valid_tokens
 
     def _apply_token(self,
-                  state: str,
-                  token_text: str,
-                  fn_def: FunctionDefinition | None,
-                  written_params: list[str],
-                  current_param: str,
-                  written_so_far: str,
-                  in_string: bool
-                  ) -> tuple[FunctionDefinition | None, list[str], str, str, bool]:
+                     state: str,
+                     token_text: str,
+                     fn_def: FunctionDefinition | None,
+                     written_params: list[str],
+                     current_param: str,
+                     written_so_far: str,
+                     in_string: bool
+                     ) -> (tuple[FunctionDefinition | None,
+                                 list[str], str, str, bool]):
         """
         Given the state BEFORE this token and the chosen token's text,
         Updates the parsing state given the token just generated.
@@ -336,11 +341,12 @@ class ConstrainedDecoder:
         written_so_far: str = ""
         in_string: bool = False
         fn_def: FunctionDefinition | None = None
+        logits: list[float] = []
 
         for _ in range(max_tokens):
             # get logits for all vocabulary tokens
             all_ids = input_ids + generated_ids
-            logits: list[float] = list(self.model.get_logits_from_input_ids(all_ids))
+            logits = list(self.model.get_logits_from_input_ids(all_ids))
 
             # determine valid tokens at this position
             state = self._get_current_state(partial_json)

@@ -5,6 +5,7 @@ from src.llm_engine import build_prompt_request
 from src.vocab_loader import replace_space_markers
 from typing import Any
 import re
+import json
 
 
 class ConstrainedDecoder:
@@ -381,3 +382,16 @@ class ConstrainedDecoder:
 
             if self._get_current_state(partial_json) == "complete":
                 break
+            if fn_def is None:
+                raise ValueError("Model failed to produce a valid function name")
+
+            try:
+                parsed = json.loads(partial_json)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Model produced invalid JSON: {partial_json!r}") from e
+
+            return FunctionCall(
+                prompt=prompt,
+                name=parsed["name"],
+                parameters=parsed["parameters"],
+            )

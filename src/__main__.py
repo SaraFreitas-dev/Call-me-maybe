@@ -45,8 +45,11 @@ def run() -> None:
     results: list[FunctionCall] = []
 
     for p in prompts:
-        function_call = constrained_decoder.generate_function_call(p.prompt)
-        results.append(function_call)
+        try:
+            function_call = constrained_decoder.generate_function_call(p.prompt)
+            results.append(function_call)
+        except ValueError as e:
+            print(f"Warning: failed to process prompt {p.prompt!r}: {e}")
 
     save_function_calls(args.output, results)
 

@@ -119,12 +119,13 @@ class ConstrainedDecoder:
             for normalized, token_id in self.normalized_vocab.items():
                 if normalized == '"':
                     valid.add(token_id)
-                elif '"' not in normalized:
-                    valid.add(token_id)
-                else:
+                elif '"' in normalized:
                     continue
-        return valid
-
+                elif any(c in normalized for c in (',', '}', '{', ':')):
+                    continue
+                else:
+                    valid.add(token_id)
+            return valid
     # ──────────────────── Name and key validators ────────────────────
     def _get_valid_name_value_tokens(
             self,
@@ -316,6 +317,9 @@ class ConstrainedDecoder:
                 elif last == '"':
                     if partial_json.rstrip().endswith('"parameters"'):
                         valid_tokens = self.token_categories[':']
+                    elif fn_def is not None and len(written_params) >= len(fn_def.parameters):
+                        # All the parameters are written - Only needs to close
+                        valid_tokens = self.token_categories['}']
                     else:
                         valid_tokens = (self.token_categories[','] |
                                         self.token_categories['}'])

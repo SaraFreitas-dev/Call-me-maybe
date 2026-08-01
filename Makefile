@@ -3,7 +3,7 @@ UV = uv
 HF_HOME = /sgoinfre/sarfreit/hf_cache
 FUNCTIONS = data/input/functions_definition.json
 INPUT = data/input/function_calling_tests.json
-OUTPUT = function_calling_results.json
+OUTPUT = data/output/function_calling_results.json
 
 export HF_HOME
 

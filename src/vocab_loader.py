@@ -13,7 +13,7 @@ def load_vocab(llm_model: Any) -> dict[str, int]:
     hugging_face_path = llm_model.get_path_to_vocab_file()
     try:
         with open(hugging_face_path, 'r') as file:
-            data = json.load(file)
+            data: dict[str, int] = json.load(file)
         return data
     except FileNotFoundError:
         print(f"Error: file not found: {hugging_face_path}")

@@ -29,6 +29,10 @@ class ConstrainedDecoder:
         self.id_to_str: dict[int, str] = build_id_to_str(vocab)
         self.token_categories: dict[str, set[int]] = build_token_categories(
             vocab)
+        self.normalized_vocab: dict[str, int] = {
+            replace_space_markers(token_str): token_id
+            for token_str, token_id in vocab.items()
+            }
 
     # ──────────────────────── Token validators ────────────────────────
     def _get_valid_bool_tokens(
@@ -49,13 +53,11 @@ class ConstrainedDecoder:
         """
         valid: set[int] = set()
         remaining: str = ""
-        normalized: str = ""
 
         for target in ["true", "false"]:
             if target.startswith(partial_value.lower()):
                 remaining = target[len(partial_value):]
-            for token_str, token_id in self.vocab.items():
-                normalized = replace_space_markers(token_str)
+            for normalized, token_id in self.normalized_vocab.items():
                 if remaining.startswith(normalized) and normalized:
                     valid.add(token_id)
         return valid
@@ -78,12 +80,10 @@ class ConstrainedDecoder:
             partial_value = "2."  → continuing a decimal: digits only
         """
         valid: set[int] = set()
-        normalized: str = ""
 
         pattern = r'^-?(\d+(\.\d*)?([eE][+-]?\d*)?)?$'
 
-        for token_str, token_id in self.vocab.items():
-            normalized = replace_space_markers(token_str)
+        for normalized, token_id in self.normalized_vocab.items():
             if normalized and re.match(pattern, partial_value + normalized):
                 valid.add(token_id)
         return valid
@@ -107,13 +107,11 @@ class ConstrainedDecoder:
             in_string = True  → all printable tokens + closing '"'
         """
         valid: set[int] = set()
-        normalized: str = ""
 
         if not in_string:
             return self.token_categories['"']
         else:
-            for token_str, token_id in self.vocab.items():
-                normalized = replace_space_markers(token_str)
+            for normalized, token_id in self.normalized_vocab.items():
                 if normalized == '"':
                     valid.add(token_id)
                 elif '"' not in normalized:
@@ -145,7 +143,6 @@ class ConstrainedDecoder:
         """
         valid: set[int] = set()
         remaining: str = ""
-        normalized: str = ""
 
         for fn in self.fn_defs:
             if written_so_far == fn.name:
@@ -154,8 +151,7 @@ class ConstrainedDecoder:
 
             if fn.name.startswith(written_so_far.lower()):
                 remaining = fn.name[len(written_so_far):]
-                for token_str, token_id in self.vocab.items():
-                    normalized = replace_space_markers(token_str)
+                for normalized, token_id in self.normalized_vocab.items():
                     if remaining.startswith(normalized) and normalized:
                         valid.add(token_id)
         return valid
@@ -181,7 +177,6 @@ class ConstrainedDecoder:
         """
         valid: set[int] = set()
         remaining: str = ""
-        normalized: str = ""
 
         for fn_keys in fn_def.parameters.keys():
             if fn_keys in written_params:
@@ -190,8 +185,7 @@ class ConstrainedDecoder:
                 return self.token_categories['"']
             if fn_keys.startswith(written_so_far):
                 remaining = fn_keys[len(written_so_far):]
-                for token_str, token_id in self.vocab.items():
-                    normalized = replace_space_markers(token_str)
+                for normalized, token_id in self.normalized_vocab.items():
                     if remaining.startswith(normalized) and normalized:
                         valid.add(token_id)
         return valid
@@ -250,19 +244,24 @@ class ConstrainedDecoder:
         elif state == "name_value":
             valid_tokens = self._get_valid_name_value_tokens(written_so_far)
         elif state == "arg_key":
-            valid_tokens = self._get_valid_param_key_tokens(fn_def,
-                                                            written_params,
-                                                            written_so_far)
+            if fn_def is not None:
+                valid_tokens = self._get_valid_param_key_tokens(
+                    fn_def,
+                    written_params,
+                    written_so_far)
 
         elif state == "arg_value":
-            param_type = fn_def.parameters[current_param].type
-            if param_type == "number":
-                valid_tokens = self._get_valid_number_tokens(written_so_far)
-            elif param_type == "string":
-                valid_tokens = self._get_valid_string_tokens(in_string,
-                                                             written_so_far)
-            elif param_type == "boolean":
-                valid_tokens = self._get_valid_bool_tokens(written_so_far)
+            if fn_def is not None:
+                param_type = fn_def.parameters[current_param].type
+                if param_type == "number":
+                    valid_tokens = self._get_valid_number_tokens(
+                        written_so_far)
+                elif param_type == "string":
+                    valid_tokens = self._get_valid_string_tokens(
+                        in_string, written_so_far)
+                elif param_type == "boolean":
+                    valid_tokens = self._get_valid_bool_tokens(
+                        written_so_far)
 
         elif state == "structural":
             last = partial_json.rstrip()[-1]
@@ -274,11 +273,20 @@ class ConstrainedDecoder:
             elif last == ",":
                 valid_tokens = self.token_categories['"']
             elif last == '"':
-                # depois de fechar uma aspa → dois pontos ou vírgula
-                if '"parameters"' not in partial_json:
-                    valid_tokens = self.token_categories[',']
+                quote_count = partial_json.count('"')
+                if quote_count % 2 == 1:
+                    # Just opened the string, the key is "parameters"
+                    target = "parameters"
+                    remaining = target[len(written_so_far):]
+                    for normalized, token_id in self.normalized_vocab.items():
+                        if remaining.startswith(normalized) and normalized:
+                            valid_tokens.add(token_id)
                 else:
-                    valid_tokens = self.token_categories[':']
+                    # Just closed the string, so it comes the separator 
+                    if '"parameters"' not in partial_json:
+                        valid_tokens = self.token_categories[',']
+                    else:
+                        valid_tokens = self.token_categories[':']
 
         elif state == "complete":
             return set()
@@ -299,12 +307,55 @@ class ConstrainedDecoder:
         Given the state BEFORE this token and the chosen token's text,
         Updates the parsing state given the token just generated.
         """
+
         if state == "name_value":
-            ...
+            if token_text == '"':
+                for fn in self.fn_defs:
+                    if fn.name == written_so_far:
+                        fn_def = fn
+                        break
+                written_so_far = ""
+            else:
+                written_so_far += token_text
+
         elif state == "arg_key":
-            ...
-        elif state == "arg_value":
-            ...
+            if token_text == '"':
+                current_param = written_so_far
+                written_so_far = ""
+            else:
+                written_so_far += token_text
+
+        elif state == "arg_value" and fn_def is not None:
+            param_type = fn_def.parameters[current_param].type
+
+            if param_type == "string":
+                if token_text == '"':
+                    if not in_string:
+                        in_string = True
+                    else:
+                        in_string = False
+                        written_params.append(current_param)
+                        current_param = ""
+                        written_so_far = ""
+                else:
+                    written_so_far += token_text
+
+            else:
+                # number / boolean: value already ended if this token
+                # is the separator that comes right after it
+                if token_text in (",", "}"):
+                    written_params.append(current_param)
+                    current_param = ""
+                    written_so_far = ""
+                else:
+                    written_so_far += token_text
+
+        elif state == "structural":
+            if token_text == '"' and written_so_far == "parameters":
+                written_so_far = ""
+            elif token_text not in ('"', ",", ":", "{", "}"):
+                written_so_far += token_text
+
         return fn_def, written_params, current_param, written_so_far, in_string
 
     # ──────────────────── Main generation loop ────────────────────
@@ -382,16 +433,17 @@ class ConstrainedDecoder:
 
             if self._get_current_state(partial_json) == "complete":
                 break
-            if fn_def is None:
-                raise ValueError("Model failed to produce a valid function name")
+        if fn_def is None:
+            raise ValueError("Model failed to produce a valid function name")
 
-            try:
-                parsed = json.loads(partial_json)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Model produced invalid JSON: {partial_json!r}") from e
+        try:
+            parsed = json.loads(partial_json)
+        except json.JSONDecodeError as e:
+            raise ValueError("Model produced invalid JSON: "
+                             f"{partial_json!r}") from e
 
-            return FunctionCall(
-                prompt=prompt,
-                name=parsed["name"],
-                parameters=parsed["parameters"],
-            )
+        return FunctionCall(
+            prompt=prompt,
+            name=parsed["name"],
+            parameters=parsed["parameters"],
+        )

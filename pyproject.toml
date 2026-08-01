@@ -8,6 +8,7 @@ dependencies = [
     "pydantic>=2.0",
     "numpy",
     "llm-sdk",
+    "accelerate>=1.14.0",
 ]
 
 [dependency-groups]
@@ -22,3 +23,8 @@ exclude = ["__pycache__", ".venv", "llm_sdk", ".mypy_cache"]
 [tool.mypy]
 exclude = ["__pycache__", ".venv", "llm_sdk"]
 disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = "llm_sdk.*"
+ignore_missing_imports = true
+follow_imports = "skip"

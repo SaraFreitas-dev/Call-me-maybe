@@ -1,8 +1,9 @@
 import json
 import sys
+import os
 from pydantic import ValidationError
 from typing import Any
-from src.schemas import (FunctionDefinition, PromptEntry)
+from src.schemas import (FunctionDefinition, PromptEntry, FunctionCall)
 
 
 def _load_json_file(path: str) -> list[dict[str, Any]]:
@@ -12,7 +13,7 @@ def _load_json_file(path: str) -> list[dict[str, Any]]:
     """
     try:
         with open(path, 'r') as file:
-            data = json.load(file)
+            data: list[dict[str, Any]] = json.load(file)
         return data
     except FileNotFoundError:
         print(f"Error: file not found: {path}")
@@ -53,4 +54,28 @@ def load_test_prompts(path: str) -> list[PromptEntry]:
         return prompts
     except ValidationError as e:
         print(f"Error loading PromptEntry JSON: {e}")
+        sys.exit(1)
+
+
+def save_function_calls(path: str,
+                        results: list[FunctionCall]) -> None:
+    """
+    Serializes a list of FunctionCall instances to a JSON file
+    at the given path, creating parent directories if needed.
+    """
+    output_dir = os.path.dirname(path)
+
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    data: list[dict[str, Any]] = []
+
+    for r in results:
+        data.append(r.model_dump())
+
+    try:
+        with open(path, "w") as file:
+            json.dump(data, file, indent=2)
+    except OSError as e:
+        print(f"Error writing the output file: {path} ({e})")
         sys.exit(1)

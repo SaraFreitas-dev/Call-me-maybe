@@ -32,7 +32,7 @@ def build_prompt_request(user_request: str,
     - Correct output expected (function call)
     """
     fn_defs_lines: list[str] = []
-    fn_defs_block: list[str] = []
+    fn_defs_block: str
     params_str: str = ""
 
     for fn in fn_defs:

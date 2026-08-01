@@ -1,20 +1,11 @@
-"""
-Main entry point of the application.
-
-Responsibilities:
-
-Parse command-line arguments.
-Load input files.
-Initialize the LLM engine.
-Run the constrained decoding process.
-Save generated function calls to the output file.
-Coordinate the overall execution flow.
-"""
 import argparse
 import src.env_setup  # noqa: F401  (import sets HF_HOME as a side effect)
 from llm_sdk import Small_LLM_Model
 from src.data_loader import load_function_definitions, load_test_prompts
 from src.vocab_loader import load_vocab
+from src.data_loader import save_function_calls
+from src.constrained_decoder import ConstrainedDecoder
+from src.schemas import FunctionCall
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,19 +38,17 @@ def run() -> None:
     fn_defs = load_function_definitions(args.functions_definition)
     prompts = load_test_prompts(args.input)
 
-    print(f"Loaded {len(fn_defs)} functions:")
-    for fn in fn_defs:
-        print(f"  - {fn.name}")
-
-    print(f"\nLoaded {len(prompts)} prompts:")
-    for p in prompts:
-        print(f"  - {p.prompt}")
-
     str_to_id = load_vocab(model)
 
-    for token_str, token_id in str_to_id.items():
-        if token_str.startswith("<|") and token_str.endswith("|>"):
-            print(token_str, token_id)
+    constrained_decoder = ConstrainedDecoder(model, fn_defs, str_to_id)
+
+    results: list[FunctionCall] = []
+
+    for p in prompts:
+        function_call = constrained_decoder.generate_function_call(p.prompt)
+        results.append(function_call)
+
+    save_function_calls(args.output, results)
 
 
 if __name__ == "__main__":

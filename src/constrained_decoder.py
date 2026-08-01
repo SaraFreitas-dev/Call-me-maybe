@@ -82,10 +82,15 @@ class ConstrainedDecoder:
         valid: set[int] = set()
 
         pattern = r'^-?(\d+(\.\d*)?([eE][+-]?\d*)?)?$'
+        complete_pattern = r'^-?\d+(\.\d+)?([eE][+-]?\d+)?$'
 
         for normalized, token_id in self.normalized_vocab.items():
             if normalized and re.match(pattern, partial_value + normalized):
                 valid.add(token_id)
+
+        if partial_value and re.match(complete_pattern, partial_value):
+            valid |= self.token_categories[',']
+            valid |= self.token_categories['}']
         return valid
 
     def _get_valid_string_tokens(
@@ -209,7 +214,7 @@ class ConstrainedDecoder:
             return "start"
         elif partial_json.endswith("}}"):
             return "complete"
-        elif 'parameters' not in partial_json:
+        elif '"parameters"' not in partial_json:
             if partial_json.count('"') < 4:
                 return "name_value"
             else:
@@ -217,9 +222,21 @@ class ConstrainedDecoder:
         else:
             # Already contains "parameters"
             params_content = partial_json.split('"parameters"')[-1]
-            if ':' not in params_content:
+            if '{' not in params_content:
+                return "structural"
+
+            after_brace = params_content.split('{', 1)[-1]
+            last_segment = after_brace.rsplit(',', 1)[-1]
+
+
+            if ':' not in last_segment:
                 return "arg_key"
-            elif partial_json[-1] not in [',', '}', ' ']:
+
+            value_part = last_segment.split(':', 1)[-1]
+            if value_part.count('"') % 2 == 1:
+                # inside an open string
+                return "arg_value"
+            elif partial_json[-1] not in [',', '}', ' ', '"']:
                 return "arg_value"
             else:
                 return "structural"
@@ -245,11 +262,18 @@ class ConstrainedDecoder:
             valid_tokens = self._get_valid_name_value_tokens(written_so_far)
         elif state == "arg_key":
             if fn_def is not None:
-                valid_tokens = self._get_valid_param_key_tokens(
-                    fn_def,
-                    written_params,
-                    written_so_far)
-
+                quote_count = partial_json.count('"')
+                if quote_count % 2 == 0:
+                    last = partial_json.rstrip()[-1]
+                    if last == '"':
+                        # Just closed a key, missing the ':'
+                        valid_tokens = self.token_categories[':']
+                    else:
+                        # After the ':' + value + ',' → New Key
+                        valid_tokens = self.token_categories['"']
+                else:
+                    valid_tokens = self._get_valid_param_key_tokens(
+                        fn_def, written_params, written_so_far)
         elif state == "arg_value":
             if fn_def is not None:
                 param_type = fn_def.parameters[current_param].type
@@ -264,29 +288,39 @@ class ConstrainedDecoder:
                         written_so_far)
 
         elif state == "structural":
-            last = partial_json.rstrip()[-1]
+            quote_count = partial_json.count('"')
 
-            if last == "{":
-                valid_tokens = self.token_categories['"']
-            elif last == ":":
-                valid_tokens = self.token_categories['"']
-            elif last == ",":
-                valid_tokens = self.token_categories['"']
-            elif last == '"':
-                quote_count = partial_json.count('"')
-                if quote_count % 2 == 1:
-                    # Just opened the string, the key is "parameters"
-                    target = "parameters"
-                    remaining = target[len(written_so_far):]
-                    for normalized, token_id in self.normalized_vocab.items():
-                        if remaining.startswith(normalized) and normalized:
-                            valid_tokens.add(token_id)
-                else:
-                    # Just closed the string, so it comes the separator 
-                    if '"parameters"' not in partial_json:
-                        valid_tokens = self.token_categories[',']
+            if quote_count % 2 == 1:
+                # Until the quotes are closed → Writing "parameters"
+                target = "parameters"
+                remaining = target[len(written_so_far):]
+                for normalized, token_id in self.normalized_vocab.items():
+                    if remaining.startswith(normalized) and normalized:
+                        valid_tokens.add(token_id)
+                if written_so_far == target:
+                    valid_tokens = self.token_categories['"']
+
+            else:
+                last = partial_json.rstrip()[-1]
+
+                if last == "{":
+                    valid_tokens = self.token_categories['"']
+                elif last == ":":
+                    params_content = partial_json.split('"parameters"')[-1]
+                    if '"parameters"' in partial_json and '{' not in params_content:
+                        valid_tokens = self.token_categories['{']
                     else:
+                        valid_tokens = self.token_categories['"']
+                elif last == ",":
+                    valid_tokens = self.token_categories['"']
+                elif last == '"':
+                    if partial_json.rstrip().endswith('"parameters"'):
                         valid_tokens = self.token_categories[':']
+                    else:
+                        valid_tokens = (self.token_categories[','] |
+                                        self.token_categories['}'])
+                elif last == '}':
+                    valid_tokens = self.token_categories['}']
 
         elif state == "complete":
             return set()
@@ -322,6 +356,8 @@ class ConstrainedDecoder:
             if token_text == '"':
                 current_param = written_so_far
                 written_so_far = ""
+            elif token_text.strip() == ':':
+                pass  # nothing to track, structural separator
             else:
                 written_so_far += token_text
 
@@ -353,7 +389,7 @@ class ConstrainedDecoder:
         elif state == "structural":
             if token_text == '"' and written_so_far == "parameters":
                 written_so_far = ""
-            elif token_text not in ('"', ",", ":", "{", "}"):
+            elif token_text.strip() not in ('"', ",", ":", "{", "}"):
                 written_so_far += token_text
 
         return fn_def, written_params, current_param, written_so_far, in_string
@@ -422,6 +458,7 @@ class ConstrainedDecoder:
             token_str = self.id_to_str[token_id]
             token_text = replace_space_markers(token_str)
             partial_json += token_text
+            print(f"state={state!r} token={token_text!r} partial_json={partial_json!r} written_so_far={written_so_far!r}")
 
             (fn_def,
              written_params,

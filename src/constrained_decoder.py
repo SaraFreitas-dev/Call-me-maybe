@@ -8,7 +8,8 @@ from src.validators import (get_regex_keyword_value,
                             get_valid_number_tokens,
                             get_valid_string_tokens,
                             get_valid_name_value_tokens,
-                            get_valid_param_key_tokens)
+                            get_valid_param_key_tokens,
+                            get_valid_integer_tokens)
 from typing import Any
 import json
 
@@ -132,13 +133,23 @@ class ConstrainedDecoder:
                         self.normalized_vocab,
                         self.token_categories,
                         written_so_far)
+                elif param_type == "integer":
+                    valid_tokens = get_valid_integer_tokens(
+                        self.normalized_vocab,
+                        self.token_categories,
+                        written_so_far)
                 elif param_type == "string":
                     valid_tokens = get_valid_string_tokens(
-                        self.normalized_vocab, self.token_categories,
-                        in_string, written_so_far, prompt_text)
+                        self.normalized_vocab,
+                        self.token_categories,
+                        in_string,
+                        written_so_far,
+                        prompt_text)
                 elif param_type == "boolean":
                     valid_tokens = get_valid_bool_tokens(
-                        self.normalized_vocab, written_so_far)
+                        self.normalized_vocab,
+                        self.token_categories,
+                        written_so_far)
 
         elif state == "structural":
             quote_count = partial_json.count('"')
@@ -161,7 +172,7 @@ class ConstrainedDecoder:
                 elif last == ":":
                     params_content = partial_json.split('"parameters"')[-1]
                     if ('"parameters"' in partial_json
-                        and '{' not in params_content):
+                            and '{' not in params_content):
                         valid_tokens = self.token_categories['{']
                     else:
                         valid_tokens = self.token_categories['"']
@@ -175,8 +186,7 @@ class ConstrainedDecoder:
                         # All the parameters are written - Only needs to close
                         valid_tokens = self.token_categories['}']
                     else:
-                        valid_tokens = (self.token_categories[','] |
-                                        self.token_categories['}'])
+                        valid_tokens = self.token_categories[',']
                 elif last == '}':
                     valid_tokens = self.token_categories['}']
 
@@ -254,11 +264,11 @@ class ConstrainedDecoder:
 
     # ──────────────────── Bonus --verbose flag ────────────────────
     def _print_verbose_report(self,
-                    prompt: str,
-                    index: int,
-                    total: int,
-                    function_call: FunctionCall | None,
-                    error: Exception | None) -> None:
+                              prompt: str,
+                              index: int,
+                              total: int,
+                              function_call: FunctionCall | None,
+                              error: Exception | None) -> None:
         """
         Print a verbose report for one processed prompt.
         Shows the generated function call or the error that occurred.
@@ -337,6 +347,11 @@ class ConstrainedDecoder:
                 prompt
             )
 
+            if not valid_ids:
+                raise ValueError(
+                    f"No valid tokens available for state {state!r}. "
+                    f"Partial JSON: {partial_json!r}")
+
             # mask all invalid tokens
             masked_logits = [
                 logit if i in valid_ids else float('-inf')
@@ -350,7 +365,12 @@ class ConstrainedDecoder:
             partial_json += token_text
 
             if self.verbose:
-                print(f"│ [{state}] token={token_text!r}")
+                # Print the state with the bonus --verbose flag
+                print(
+                    f"│ state={state} "
+                    f"token_id={token_id} "
+                    f"token={token_text!r} "
+                    f"valid={len(valid_ids)}")
 
             (fn_def,
              written_params,
@@ -362,6 +382,13 @@ class ConstrainedDecoder:
 
             if self._get_current_state(partial_json) == "complete":
                 break
+
+        if self._get_current_state(partial_json) != "complete":
+            # Max tokens were reached
+            raise ValueError(
+                f"Generation did not complete within {max_tokens} tokens. "
+                f"Partial JSON: {partial_json!r}")
+
         if fn_def is None:
             raise ValueError("Model failed to produce a valid function name")
 

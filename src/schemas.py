@@ -47,4 +47,4 @@ class FunctionCall(BaseModel):
     """
     prompt: str
     name: str
-    parameters: dict[str, float | str | bool]
+    parameters: dict[str, int | float | str | bool]

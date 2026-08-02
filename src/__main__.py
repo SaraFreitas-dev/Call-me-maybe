@@ -1,5 +1,6 @@
 import argparse
 import sys
+from typing import Any
 import src.env_setup  # noqa: F401  (import sets HF_HOME as a side effect)
 from src.data_loader import load_function_definitions, load_test_prompts
 from src.vocab_loader import load_vocab
@@ -7,6 +8,8 @@ from src.data_loader import save_function_calls
 from src.constrained_decoder import ConstrainedDecoder
 from src.schemas import FunctionCall
 from src.llm_engine import create_model
+from src.recovery import (generate_with_recovery,
+                          export_recovery_report)
 
 
 def parse_args() -> argparse.Namespace:
@@ -21,19 +24,21 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--functions_definition",
                         default="data/input/functions_definition.json",
-                        help="Path to the JSON file containing function definitions")
+                        help="Path to the JSON file containing "
+                        "function definitions")
     parser.add_argument("--input",
                         default="data/input/function_calling_tests.json",
                         help="Path to the JSON file containing input prompts")
     parser.add_argument("--output",
                         default="data/output/function_calling_results.json",
-                        help="Path where generated function calls will be saved")
+                        help="Path where generated function calls "
+                        "will be saved")
     parser.add_argument("--model",
                         default="Qwen/Qwen3-0.6B",
                         help="Name of the language model to use")
     parser.add_argument("--verbose",
-                    action="store_true",
-                    help="Print detailed generation trace to stdout")
+                        action="store_true",
+                        help="Print detailed generation trace to stdout")
     args = parser.parse_args()
     return args
 
@@ -57,15 +62,18 @@ def run() -> None:
 
     results: list[FunctionCall] = []
     total: int = len(prompts)
+    recovery_log: list[dict[str, Any]] = []
 
     if args.verbose:
-        print(f"Total functions: {total}")
+        print(f"╭───Total functions: {total} " + "─" * 30)
 
     for index, prompt_entry in enumerate(prompts, start=1):
         try:
-            function_call = const_decoder.generate_function_call(
-                prompt_entry.prompt
-            )
+            function_call = generate_with_recovery(
+                const_decoder,
+                prompt_entry.prompt,
+                recovery_log)
+
             results.append(function_call)
             if args.verbose:
                 const_decoder._print_verbose_report(
@@ -94,6 +102,8 @@ def run() -> None:
     save_function_calls(args.output, results)
 
     if args.verbose:
+        export_recovery_report("data/output/recovery_report.json",
+                               recovery_log)
         print(
             f"\nFinished: {len(results)}/{total} "
             "functions generated successfully"

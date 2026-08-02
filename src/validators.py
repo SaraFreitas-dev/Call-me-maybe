@@ -30,20 +30,29 @@ def get_regex_keyword_value(prompt_text: str) -> str | None:
 
 def get_valid_bool_tokens(
         normalized_vocab: dict[str, int],
+        token_categories: dict[str, set[int]],
         partial_value: str) -> set[int]:
     """
-    Returns the set of token IDs that can legally continue
-    a JSON boolean value at the current generation step.
+    Return tokens that can continue or finish a JSON boolean.
     """
     valid: set[int] = set()
-    remaining: str = ""
+    lowered_value = partial_value.lower()
 
-    for target in ["true", "false"]:
-        if target.startswith(partial_value.lower()):
-            remaining = target[len(partial_value):]
+    for target in ("true", "false"):
+        if not target.startswith(lowered_value):
+            continue
+
+        remaining = target[len(lowered_value):]
+
+        if remaining == "":
+            valid |= token_categories[","]
+            valid |= token_categories["}"]
+            continue
+
         for normalized, token_id in normalized_vocab.items():
-            if remaining.startswith(normalized) and normalized:
+            if normalized and remaining.startswith(normalized.lower()):
                 valid.add(token_id)
+
     return valid
 
 
@@ -57,16 +66,41 @@ def get_valid_number_tokens(
     """
     valid: set[int] = set()
 
-    pattern = r'^-?(\d+(\.\d*)?([eE][+-]?\d*)?)?$'
-    complete_pattern = r'^-?\d+(\.\d+)?([eE][+-]?\d+)?$'
+    pattern = r'-?(\d+(\.\d*)?([eE][+-]?\d*)?)?'
+    complete_pattern = r'-?\d+(\.\d+)?([eE][+-]?\d+)?'
 
     for normalized, token_id in normalized_vocab.items():
-        if normalized and re.match(pattern, partial_value + normalized):
+        if normalized and re.fullmatch(pattern, partial_value + normalized):
             valid.add(token_id)
 
-    if partial_value and re.match(complete_pattern, partial_value):
+    if partial_value and re.fullmatch(complete_pattern, partial_value):
         valid |= token_categories[',']
         valid |= token_categories['}']
+    return valid
+
+
+def get_valid_integer_tokens(
+        normalized_vocab: dict[str, int],
+        token_categories: dict[str, set[int]],
+        partial_value: str) -> set[int]:
+    """
+    Return tokens that can continue a valid JSON integer.
+    """
+    valid: set[int] = set()
+
+    partial_pattern = r"-?\d*"
+    complete_pattern = r"-?\d+"
+
+    for normalized, token_id in normalized_vocab.items():
+        candidate = partial_value + normalized
+
+        if normalized and re.fullmatch(partial_pattern, candidate):
+            valid.add(token_id)
+
+    if partial_value and re.fullmatch(complete_pattern, partial_value):
+        valid |= token_categories[","]
+        valid |= token_categories["}"]
+
     return valid
 
 

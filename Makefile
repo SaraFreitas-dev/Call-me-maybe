@@ -45,6 +45,25 @@ debug:
 		--output $(OUTPUT)
 
 help:
+	@echo ""
+	@echo "╔══════════════════════════════════════════════════════╗"
+	@echo "║              Call Me Maybe — Make Commands           ║"
+	@echo "╚══════════════════════════════════════════════════════╝"
+	@echo ""
+	@echo "  📦 make install       Install project dependencies"
+	@echo "  ▶️  make run           Run with default settings"
+	@echo "  🔍 make run-verbose   Run with detailed generation trace"
+	@echo "  🐞 make debug         Run with Python's pdb debugger"
+	@echo ""
+	@echo "  ✅ make lint          Run flake8 and mypy checks"
+	@echo "  🧠 make lint-strict   Run stricter mypy checks"
+	@echo ""
+	@echo "  🧹 make clean         Remove cache files"
+	@echo "  💣 make fclean        Remove cache + Output files + virtual environment"
+	@echo "  🔁 make re            Full clean and reinstall"
+	@echo ""
+	@echo "  ℹ️  Program-specific options running with run python -m src ... (--model, --verbose, etc.):"
+	@echo ""
 	@$(UV) run python -m src --help
 
 # CHECK FOR NORM ERRORS
@@ -66,10 +85,13 @@ lint-strict:
 	@echo "✅ Strict lint completed"
 
 # CLEANERS
+# CLEANERS
 clean:
 	@echo "\n🧹 Cleaning cache files..."
-	@find . -name "__pycache__" -exec rm -rf {} +
-	@find . -name "*.pyc" -delete
+	@find . -type d -name "__pycache__" -exec rm -rf {} +
+	@find . -type f -name "*.pyc" -delete
+	@echo "\n🧹 Cleaning generated output..."
+	@rm -f data/output/*.json
 	@echo "\n✅ Partial clean complete\n"
 
 fclean: clean

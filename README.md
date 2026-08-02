@@ -52,7 +52,8 @@
 }
 ```
 
-The twist: the model used here (**Qwen/Qwen3-0.6B**) is small — only ~500M parameters — and small models are notoriously unreliable at producing valid JSON on their own (often under 30% success). This project does **not** rely on prompting alone. Instead, it implements **constrained decoding**: at every single token the model generates, the program masks out every token that would break the JSON structure or the function schema, guaranteeing **100% syntactically and structurally valid output**, every time.
+The twist: the model used here (**Qwen/Qwen3-0.6B**) is small — only ~500M parameters — and small models are notoriously unreliable at producing valid JSON on their own (often under 30% success). This project does **not** rely on prompting alone. Instead, it implements **constrained decoding**: at every single token the model generates, the program masks out every token that would break the JSON structure or the function schema, significantly improving JSON and schema reliability by restricting each
+generated token to the set of valid continuations.
 
 ---
 
@@ -266,7 +267,7 @@ A dedicated **regex-keyword shortcut** handles one unavoidable limitation of anc
 ## 📊 Performance Analysis
 
 - **Accuracy**: all 11 example prompts produce a valid, schema-compliant function call.
-- **Reliability**: constrained decoding guarantees 100% valid JSON structure — the model physically cannot emit a token that breaks the schema, because invalid tokens are masked to `-inf` before selection.
+- **Reliability**: constrained decoding significantly improves the valid JSON structure — the model physically cannot emit a token that breaks the schema, because invalid tokens are masked to `-inf` before selection.
 - **Speed**: generation is dominated by the LLM forward pass, called once per generated token; typical prompts complete well within the 5-minute budget for the full test set on standard hardware.
 - **Safety net**: if the valid-token set is ever empty (an edge case the state machine did not anticipate), generation fails immediately with a descriptive `ValueError` rather than silently degrading into meaningless output.
 

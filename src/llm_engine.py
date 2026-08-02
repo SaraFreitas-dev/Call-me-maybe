@@ -17,7 +17,7 @@ def create_model(model_name: str = "Qwen/Qwen3-0.6B") -> Any:
 def build_prompt_request(user_request: str,
                          fn_defs: list[FunctionDefinition]) -> str:
     """
-    Rceives the user prompt and the lists of available functions
+    Receives the user prompt and the lists of available functions
     And returns a str ready for the LLM Model to understand and
     e.g:
     FunctionDefinition(

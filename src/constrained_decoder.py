@@ -17,17 +17,14 @@ class ConstrainedDecoder:
     """
     Core component of the project.
     Perform token-by-token constrained decoding.
-    Restrict valid next-token choices.
-    Ensure only valid JSON structures can be generated.
-    Ensure only existing functions and parameters are used.
-    Prevent invalid outputs from the language model.
     Generate structured function calls safely.
     """
     def __init__(self,
                  model: Any,
                  fn_defs: list[FunctionDefinition],
-                 vocab: dict[str, int]
-                 ) -> None:
+                 vocab: dict[str, int],
+                 verbose: bool = False) -> None:
+
         self.model = model
         self.fn_defs = fn_defs
         self.vocab = vocab  # token_string → token_id  (real vocab format)
@@ -38,6 +35,7 @@ class ConstrainedDecoder:
             replace_space_markers(token_str): token_id
             for token_str, token_id in vocab.items()
             }
+        self.verbose = verbose  # Bonus flag
 
     # ─────────────────────── State machine ───────────────────────
 
@@ -71,7 +69,6 @@ class ConstrainedDecoder:
 
             after_brace = params_content.split('{', 1)[-1]
             last_segment = after_brace.rsplit(',', 1)[-1]
-
 
             if ':' not in last_segment:
                 return "arg_key"
@@ -132,7 +129,9 @@ class ConstrainedDecoder:
                 param_type = fn_def.parameters[current_param].type
                 if param_type == "number":
                     valid_tokens = get_valid_number_tokens(
-                        self.normalized_vocab, self.token_categories, written_so_far)
+                        self.normalized_vocab,
+                        self.token_categories,
+                        written_so_far)
                 elif param_type == "string":
                     valid_tokens = get_valid_string_tokens(
                         self.normalized_vocab, self.token_categories,
@@ -161,7 +160,8 @@ class ConstrainedDecoder:
                     valid_tokens = self.token_categories['"']
                 elif last == ":":
                     params_content = partial_json.split('"parameters"')[-1]
-                    if '"parameters"' in partial_json and '{' not in params_content:
+                    if ('"parameters"' in partial_json
+                        and '{' not in params_content):
                         valid_tokens = self.token_categories['{']
                     else:
                         valid_tokens = self.token_categories['"']
@@ -170,7 +170,8 @@ class ConstrainedDecoder:
                 elif last == '"':
                     if partial_json.rstrip().endswith('"parameters"'):
                         valid_tokens = self.token_categories[':']
-                    elif fn_def is not None and len(written_params) >= len(fn_def.parameters):
+                    elif (fn_def is not None and
+                          len(written_params) >= len(fn_def.parameters)):
                         # All the parameters are written - Only needs to close
                         valid_tokens = self.token_categories['}']
                     else:
@@ -251,28 +252,38 @@ class ConstrainedDecoder:
 
         return fn_def, written_params, current_param, written_so_far, in_string
 
-    # ──────────────────── Main generation loop ────────────────────
+    # ──────────────────── Bonus --verbose flag ────────────────────
+    def _print_verbose_report(self,
+                    prompt: str,
+                    index: int,
+                    total: int,
+                    function_call: FunctionCall | None,
+                    error: Exception | None) -> None:
+        """
+        Print a verbose report for one processed prompt.
+        Shows the generated function call or the error that occurred.
+        """
+        print(f"\n╭─── function {index}/{total} " + "─" * 30)
+        print(f"│ prompt: {prompt!r}")
 
+        if function_call is not None:
+            print(f"│ name: {function_call.name}")
+            print(f"│ parameters: {function_call.parameters}")
+            print("╰─── ✅ success")
+        else:
+            print(f"│ error ({type(error).__name__}): {error}")
+            print("╰─── ❌ failed")
+
+    # ──────────────────── Main generation loop ────────────────────
     def generate_function_call(
             self,
             prompt: str,
             max_tokens: int = 200) -> FunctionCall:
         """
-        Generates a schema-valid JSON function call for the given prompt
-        using token-by-token constrained decoding.
+        Generate a schema-valid function call from a natural-language prompt.
 
-        Builds a full prompt from the user request and available functions,
-        encodes it, then iteratively selects the next valid token until
-        the JSON output is complete. At each step, invalid tokens are
-        masked to -inf to guarantee structural and schema compliance.
-
-        Args:
-            prompt:     The original natural language user request.
-            max_tokens: Maximum number of tokens to generate before stopping.
-
-        Returns:
-            A FunctionCall instance containing the original prompt, the
-            selected function name, and the extracted parameters.
+        Uses token-by-token constrained decoding and returns the selected
+        function name with its parameters.
         """
 
         # tokenize the prompt — encode() returns a 2D tensor
@@ -337,7 +348,9 @@ class ConstrainedDecoder:
             token_str = self.id_to_str[token_id]
             token_text = replace_space_markers(token_str)
             partial_json += token_text
-            print(f"state={state!r} token={token_text!r} partial_json={partial_json!r} written_so_far={written_so_far!r}")
+
+            if self.verbose:
+                print(f"│ [{state}] token={token_text!r}")
 
             (fn_def,
              written_params,

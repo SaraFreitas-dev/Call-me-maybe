@@ -30,12 +30,22 @@ run:
 		--input $(INPUT) \
 		--output $(OUTPUT)
 
+run-verbose:
+	@$(UV) run python -m src \
+		--functions_definition $(FUNCTIONS) \
+		--input $(INPUT) \
+		--output $(OUTPUT) \
+		--verbose
+
+# DEBUG AND HELP
 debug:
 	@$(UV) run python -m pdb -m src \
 		--functions_definition $(FUNCTIONS) \
 		--input $(INPUT) \
 		--output $(OUTPUT)
 
+help:
+	@$(UV) run python -m src --help
 
 # CHECK FOR NORM ERRORS
 lint:

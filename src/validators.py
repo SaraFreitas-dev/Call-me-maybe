@@ -7,15 +7,20 @@ from src.schemas import FunctionDefinition
 REGEX_KEYWORD_MAP = {
     "numbers": r"\d+", "digits": r"\d+",
     "vowels": "[aeiouAEIOU]",
+    "consonants": r"[^aeiouAEIOU\s]",
     "letters": "[a-zA-Z]",
-    # ...
+    "uppercase": "[A-Z]",
+    "lowercase": "[a-z]",
+    "whitespace": r"\s+",
+    "spaces": r"\s+",
+    "punctuation": r"[.,!?;:]",
 }
 
 
 def get_regex_keyword_value(prompt_text: str) -> str | None:
     lowered = prompt_text.lower()
     for kw, pattern in sorted(REGEX_KEYWORD_MAP.items(),
-                               key=lambda x: -len(x[0])):
+                              key=lambda x: -len(x[0])):
         if kw in lowered:
             return pattern
     return None

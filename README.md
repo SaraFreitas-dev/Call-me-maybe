@@ -172,6 +172,7 @@ Each file in `docs/` covers one topic in isolation, so any concept used in the c
 
 ---
 
+
 ## ⚙️ Installation
 
 Requirements: Python 3.10+, and [`uv`](https://docs.astral.sh/uv/).

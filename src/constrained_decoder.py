@@ -247,7 +247,7 @@ class ConstrainedDecoder:
             else:
                 # number / boolean: value already ended if this token
                 # is the separator that comes right after it
-                if token_text in (",", "}"):
+                if token_text.strip() in (",", "}"):
                     written_params.append(current_param)
                     current_param = ""
                     written_so_far = ""

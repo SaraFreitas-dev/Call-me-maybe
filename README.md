@@ -262,6 +262,40 @@ A dedicated **regex-keyword shortcut** handles one unavoidable limitation of anc
 | **Advanced error recovery** | ✅ | `recovery.py` — retries failed generations with an increasing token budget, logs every attempt, and exports a recovery report in the output folder |
 | **Visualization of the generation process** | ✅ | `--verbose` flag — prints a formatted, per-prompt trace (state, token, token id, number of valid candidates) and a final success/failure summary on the terminal |
 
+### ✅ How to verify
+
+**Multiple LLM models**
+```bash
+uv run python -m src --model "Qwen/Qwen3-0.6B" --output data/output/test_default.json
+```
+The run should complete without crashing and produce valid, schema-compliant JSON in the output file. Any other model name can be passed the same way via `--model`.
+
+**Advanced error recovery**
+
+Force a recovery scenario with a prompt long enough to exceed the initial 200-token budget (the first attempt fails, the retry with a 400-token budget succeeds):
+
+`data/input/recovery_test.json`:
+```json
+[
+  {
+    "prompt": "Reverse the string 'this is a very long string deliberately crafted to force the constrained decoder to exceed the initial two hundred token generation budget so that the automatic recovery mechanism kicks in and retries with a larger budget of four hundred tokens which should then be enough to complete the full valid json output successfully without any further issues at all please keep adding more and more words here because the first attempt clearly did not use enough tokens to trigger the failure so this sentence needs to be substantially longer than before with many additional words padding it out until it finally crosses the two hundred token threshold and forces the recovery mechanism to actually kick in in this constrained decoding engine we are testing today for the call me maybe project at fourty two school porto and since one hundred and forty tokens was still not enough we are now adding an entire additional paragraph of padding text to make absolutely certain that this string pushes the total token count comfortably past the two hundred token mark so the recovery mechanism has no choice but to trigger on the very first attempt before succeeding on the second retry with the doubled token budget of four hundred tokens which will definitely be sufficient to hold this much longer piece of text from start to finish without truncation'"
+  }
+]
+```
+
+```bash
+uv run python -m src --input data/input/recovery_test.json --output data/output/recovery_test_output.json --verbose
+cat data/output/recovery_report.json
+```
+The terminal should show a failed first attempt (`Generation did not complete within 200 tokens...`) followed by a successful retry, and `recovery_report.json` should list the failed attempt instead of the "no recovery needed" confirmation.
+
+**Visualization of the generation process**
+```bash
+make run-verbose
+```
+Prints a per-token trace (`state`, `token_id`, `token`, `valid` candidate count) for every prompt, followed by a per-function success/failure summary.
+
+
 ---
 
 ## 📊 Performance Analysis

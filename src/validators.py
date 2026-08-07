@@ -66,8 +66,8 @@ def get_valid_number_tokens(
     """
     valid: set[int] = set()
 
-    pattern = r'-?(\d+(\.\d*)?([eE][+-]?\d*)?)?'
-    complete_pattern = r'-?\d+(\.\d+)?([eE][+-]?\d+)?'
+    pattern = r"-?(0|[1-9]\d*)?(\.\d*)?([eE][+-]?\d*)?"
+    complete_pattern = r"-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?"
 
     for normalized, token_id in normalized_vocab.items():
         if normalized and re.fullmatch(pattern, partial_value + normalized):
@@ -119,8 +119,7 @@ def get_valid_string_tokens(
         return token_categories['"']
 
     valid: set[int] = set()
-    if partial_value:
-        valid |= token_categories['"']
+    valid |= token_categories['"']
 
     for normalized, token_id in normalized_vocab.items():
         if '"' in normalized or not normalized:
